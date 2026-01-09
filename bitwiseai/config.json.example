@@ -1,0 +1,22 @@
+{
+  "_comment": "BitwiseAI 配置文件示例",
+  "_note": "API 密钥可以在此处配置，也可以使用 .env 文件中的环境变量",
+  "llm": {
+    "api_key": "your-llm-api-key",
+    "base_url": "https://your-llm-api-endpoint/v1",
+    "model": "MiniMax-M2.1",
+    "temperature": 0.7
+  },
+  "embedding": {
+    "api_key": "your-embedding-api-key",
+    "base_url": "https://your-embedding-api-endpoint/v1",
+    "model": "Qwen/Qwen3-Embedding-8B"
+  },
+  "vector_db": {
+    "db_file": "~/.bitwiseai/milvus_data.db",
+    "collection_name": "bitwiseai_specs",
+    "embedding_dim": 4096
+  },
+  "system_prompt": "你是 BitwiseAI，专注于硬件指令验证和调试日志分析的 AI 助手。你可以帮助用户：\n1. 解析和分析硬件调试日志\n2. 验证指令计算的正确性\n3. 发现潜在的问题和异常\n4. 提供基于规范文档的专业建议",
+  "tools": []
+}

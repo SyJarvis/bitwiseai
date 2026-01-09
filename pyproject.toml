@@ -1,0 +1,26 @@
+[project]
+name = "bitwiseai"
+version = "0.1.1"
+description = "BitwiseAI - 硬件调试和日志分析的 AI 工具"
+authors = [
+    {name = "SyJarvis", email = "1755115828@qq.com"}
+]
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "langchain>=0.1.0",
+    "langchain-openai>=0.0.5",
+    "pymilvus>=2.3.0",
+    "numpy>=1.20.0",
+    "python-dotenv>=1.0.0"
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0.0", "black>=23.0.0", "flake8>=6.0.0"]
+
+[project.scripts]
+bitwiseai = "bitwiseai.cli:main"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
