@@ -21,7 +21,6 @@ from .utils import DocumentLoader, TextSplitter
 from .core import SkillManager, RAGEngine, ChatEngine
 from .core.document_manager import DocumentManager
 from .interfaces import TaskInterface, AnalysisResult
-from .reporter import Reporter
 
 
 class BitwiseAI:
@@ -151,9 +150,6 @@ class BitwiseAI:
         self.tasks: List[TaskInterface] = []
         self.task_results: Dict[str, List[AnalysisResult]] = {}
         
-        # 报告生成器
-        self.reporter = Reporter()
-        
         # 当前日志文件路径（用于任务执行）
         self.log_file_path: Optional[str] = None
 
@@ -212,7 +208,13 @@ class BitwiseAI:
         """
         return self.rag_engine.add_text(text)
 
-    def chat(self, query: str, use_rag: bool = True, use_tools: bool = True) -> str:
+    def chat(
+        self,
+        query: str,
+        use_rag: bool = True,
+        use_tools: bool = True,
+        history: Optional[List[dict]] = None
+    ) -> str:
         """
         对话方法（非流式）
 
@@ -220,17 +222,19 @@ class BitwiseAI:
             query: 用户问题
             use_rag: 是否使用 RAG 模式（默认 True）
             use_tools: 是否使用工具（默认 True）
+            history: 历史消息列表 [{"role": "user", "content": "..."}, ...]
 
         Returns:
             LLM 生成的回答
         """
-        return self.chat_engine.chat(query, use_rag=use_rag, use_tools=use_tools)
+        return self.chat_engine.chat(query, use_rag=use_rag, use_tools=use_tools, history=history)
 
     def chat_stream(
         self,
         query: str,
         use_rag: bool = True,
-        use_tools: bool = True
+        use_tools: bool = True,
+        history: Optional[List[dict]] = None
     ) -> Iterator[str]:
         """
         流式对话方法
@@ -239,11 +243,12 @@ class BitwiseAI:
             query: 用户问题
             use_rag: 是否使用 RAG 模式（默认 True）
             use_tools: 是否使用工具（默认 True）
+            history: 历史消息列表 [{"role": "user", "content": "..."}, ...]
 
         Yields:
             每个 token 的字符串片段
         """
-        yield from self.chat_engine.chat_stream(query, use_rag=use_rag, use_tools=use_tools)
+        yield from self.chat_engine.chat_stream(query, use_rag=use_rag, use_tools=use_tools, history=history)
 
     def clear_vector_db(self):
         """
@@ -384,7 +389,6 @@ class BitwiseAI:
         
         # 保存结果
         self.task_results[task_obj.get_name()] = results
-        self.reporter.add_results(results)
         
         print(f"✓ 任务完成: {len(results)} 个结果")
         return results
@@ -470,12 +474,51 @@ class BitwiseAI:
         Returns:
             报告内容
         """
+        from datetime import datetime
+        
+        # 收集所有任务结果
+        all_results = []
+        for task_name, results in self.task_results.items():
+            all_results.extend(results)
+        
         if format == "text":
-            return self.reporter.generate_summary()
+            lines = [
+                "=" * 60,
+                "BitwiseAI 分析报告",
+                f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                "=" * 60,
+                "",
+                f"总结果数: {len(all_results)}",
+                ""
+            ]
+            return "\n".join(lines)
         elif format == "markdown":
-            return self.reporter.generate_markdown_report()
+            lines = [
+                "# BitwiseAI 分析报告",
+                "",
+                f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                "",
+                "## 摘要",
+                "",
+                f"- 总结果数: {len(all_results)}",
+                ""
+            ]
+            return "\n".join(lines)
         elif format == "json":
-            return self.reporter.generate_json_report()
+            import json
+            report = {
+                "timestamp": datetime.now().isoformat(),
+                "total_results": len(all_results),
+                "results": [
+                    {
+                        "status": getattr(r, 'status', 'unknown'),
+                        "message": getattr(r, 'message', ''),
+                        "data": getattr(r, 'data', {})
+                    }
+                    for r in all_results
+                ]
+            }
+            return json.dumps(report, ensure_ascii=False, indent=2)
         else:
             raise ValueError(f"不支持的报告格式: {format}")
     

@@ -15,7 +15,6 @@ from bitwiseai import BitwiseAI
 from pages.chat import create_chat_interface
 from pages.tools import create_tools_interface
 from pages.rag import create_rag_interface
-from pages.logs import create_logs_interface
 
 
 class BitwiseAIWeb:
@@ -34,7 +33,7 @@ class BitwiseAIWeb:
             print("✓ BitwiseAI 初始化成功")
         except Exception as e:
             print(f"⚠️ BitwiseAI 初始化失败: {e}")
-            print("请先运行: python -m bitwiseai --generate-config")
+            print("请先运行: bitwiseai --generate-config")
             self.ai = None
 
     def create_app(self):
@@ -48,7 +47,7 @@ class BitwiseAIWeb:
             ) as app:
                 gr.Markdown("# ⚠️ BitwiseAI 未初始化")
                 gr.Markdown("请先配置 API 密钥：")
-                gr.Code("python -m bitwiseai --generate-config", language="bash")
+                gr.Code("bitwiseai --generate-config", language="bash")
             return app
 
         # 创建多标签页应用
@@ -79,10 +78,6 @@ class BitwiseAIWeb:
                 # RAG 文档管理页
                 with gr.Tab("📚 知识库"):
                     rag_interface = create_rag_interface(self)
-
-                # 日志分析页
-                with gr.Tab("📊 日志分析"):
-                    logs_interface = create_logs_interface(self)
 
             # 页脚
             gr.HTML("""

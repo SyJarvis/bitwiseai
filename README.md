@@ -44,50 +44,53 @@ bash install.sh
 
 ## 🚀 快速开始
 
-### 方式1: 命令行工具（推荐）
+### 第一步：安装
 
 ```bash
-# 1. 生成配置文件（交互式配置）
-python -m bitwiseai --generate-config
+# 克隆仓库
+git clone https://github.com/SyJarvis/BitwiseAI.git
+cd BitwiseAI
 
-# 2. 单次对话
-python -m bitwiseai --chat "今天天气怎么样"
-
-# 3. 交互式对话
-python -m bitwiseai --interactive
-
-# 4. 查看帮助
-python -m bitwiseai --help
-
-# 或者使用快捷脚本
-bash bitwiseai_cli.sh --help
+# 安装
+pip install -e .
 ```
 
-**首次使用必须配置**：
+### 第二步：配置
 
-运行 `python -m bitwiseai --generate-config` 会交互式地收集以下信息并生成配置文件：
-- LLM API Key 和 Base URL
-- Embedding API Key 和 Base URL  
-- 模型名称和参数
-- 系统提示词
+首次使用需要生成配置文件：
+
+```bash
+# 交互式生成配置文件
+bitwiseai --generate-config
+```
+
+这会引导你输入以下信息：
+- **LLM API Key** 和 **Base URL**（如 OpenAI、MiniMax 等）
+- **Embedding API Key** 和 **Base URL**
+- **模型名称**和参数
+- **向量数据库**配置
+- **系统提示词**（可选）
 
 配置文件保存在 `~/.bitwiseai/config.json`
 
-### 方式2: 使用 .env 文件
+> 💡 **提示**：也可以使用 `.env` 文件配置 API 密钥，详见下方说明。
 
-创建 `.env` 文件并配置 API 密钥：
+### 第三步：开始使用
+
+#### 方式 1: 命令行工具（推荐）
 
 ```bash
-# LLM 配置
-LLM_API_KEY=your-api-key
-LLM_BASE_URL=https://your-api-endpoint/v1
+# 单次对话
+bitwiseai chat "什么是 MUL 指令？"
 
-# Embedding 配置
-EMBEDDING_API_KEY=your-api-key
-EMBEDDING_BASE_URL=https://your-api-endpoint/v1
+# 交互式对话
+bitwiseai chat
+
+# 查看帮助
+bitwiseai --help
 ```
 
-### 2. 基本使用
+#### 方式 2: Python 代码
 
 ```python
 from bitwiseai import BitwiseAI
@@ -95,15 +98,159 @@ from bitwiseai import BitwiseAI
 # 初始化
 ai = BitwiseAI()
 
+# 基础对话
+response = ai.chat("什么是 MUL 指令？")
+print(response)
+
 # 加载规范文档到知识库（可选）
 ai.load_specification("./docs/hardware_spec.pdf")
 
-# 使用 LLM 对话
-response = ai.chat("什么是 MUL 指令？")
+# 使用 RAG 模式对话
+response = ai.chat("MUL 指令的参数有哪些？", use_rag=True)
 print(response)
 ```
 
-### 3. 自定义分析任务
+## 📋 工作流程
+
+BitwiseAI 的典型工作流程如下：
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  1. 安装和配置                                            │
+│     - 安装 BitwiseAI                                    │
+│     - 运行 bitwiseai --generate-config 配置 API         │
+└─────────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────────┐
+│  2. 准备数据（可选）                                       │
+│     - 加载规范文档到向量数据库（RAG）                      │
+│     - 准备日志文件（如果需要分析）                         │
+└─────────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────────┐
+│  3. 实现业务逻辑（在你的项目中）                           │
+│     - 实现 LogParserInterface（解析日志）                 │
+│     - 实现 VerifierInterface（验证数据）                  │
+│     - 创建 AnalysisTask（定义分析任务）                   │
+│     - 开发 Skills（扩展工具能力）                         │
+└─────────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────────┐
+│  4. 使用 BitwiseAI                                       │
+│     - 初始化 BitwiseAI                                   │
+│     - 注册任务和工具                                      │
+│     - 执行分析或对话                                      │
+│     - 生成报告                                           │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 详细工作流程示例
+
+#### 场景 1: 基础对话和 RAG 查询
+
+```python
+from bitwiseai import BitwiseAI
+
+# 1. 初始化
+ai = BitwiseAI()
+
+# 2. 加载规范文档（可选）
+ai.load_documents("./docs/hardware_spec/")
+
+# 3. 使用 RAG 模式对话
+response = ai.chat("MUL 指令的参数有哪些？", use_rag=True)
+print(response)
+```
+
+#### 场景 2: 自定义分析任务
+
+```python
+from bitwiseai import BitwiseAI
+from bitwiseai.interfaces import AnalysisTask, AnalysisResult
+
+# 1. 定义自定义任务
+class MyLogAnalysisTask(AnalysisTask):
+    def analyze(self, context, parsed_data):
+        # 实现你的分析逻辑
+        results = []
+        # ... 分析代码 ...
+        return results
+
+# 2. 使用任务
+ai = BitwiseAI()
+ai.load_log_file("test.log")
+ai.register_task(MyLogAnalysisTask())
+results = ai.execute_all_tasks()
+
+# 3. 生成报告
+ai.save_report("report.md")
+```
+
+#### 场景 3: 使用 Skills 扩展功能
+
+```python
+from bitwiseai import BitwiseAI
+
+# 1. 初始化
+ai = BitwiseAI()
+
+# 2. 查看可用 Skills
+skills = ai.list_skills()
+print(f"可用 Skills: {skills}")
+
+# 3. 加载 Skill（如果已创建）
+ai.load_skill("my_custom_skill")
+
+# 4. 在对话中使用工具
+response = ai.chat("使用 my_tool 处理数据", use_tools=True)
+print(response)
+```
+
+### 使用 .env 文件配置（可选）
+
+除了交互式配置，你也可以使用 `.env` 文件：
+
+```bash
+# .env 文件
+LLM_API_KEY=your-api-key
+LLM_BASE_URL=https://your-api-endpoint/v1
+
+EMBEDDING_API_KEY=your-api-key
+EMBEDDING_BASE_URL=https://your-api-endpoint/v1
+```
+
+BitwiseAI 会自动读取 `.env` 文件中的配置。
+
+
+## 📚 使用示例
+
+更多详细示例请查看 `examples/` 目录：
+
+- **[基础使用示例](examples/basic_usage.py)** - 初始化、对话、工具调用
+- **[RAG 使用示例](examples/rag_usage.py)** - 文档加载、检索、RAG 对话
+- **[自定义 Skill 示例](examples/custom_skill_example.py)** - 创建和使用自定义 Skills
+- **[文档导出示例](examples/document_export.py)** - 导出向量数据库中的文档
+
+### 示例 1: RAG 规范查询
+
+```python
+from bitwiseai import BitwiseAI
+
+ai = BitwiseAI()
+
+# 加载硬件规范文档
+ai.load_documents("./docs/hardware_manual/")
+
+# 查询规范
+context = ai.query_specification("MUL 指令的 func_sel 参数含义", top_k=5)
+print(context)
+
+# 使用 RAG 模式对话
+response = ai.chat("如何验证 SHIFT 指令？", use_rag=True)
+print(response)
+```
+
+### 示例 2: 自定义分析任务
 
 ```python
 from bitwiseai import BitwiseAI
@@ -112,23 +259,24 @@ from bitwiseai.interfaces import AnalysisTask, AnalysisResult
 class MyLogAnalysisTask(AnalysisTask):
     """自定义日志分析任务"""
     
-    def analyze(self, context: BitwiseAI, parsed_data):
+    def analyze(self, context, parsed_data):
         """实现你的分析逻辑"""
         results = []
         
         # 读取日志
-        with open(context.log_file_path, 'r') as f:
-            log_content = f.read()
-        
-        # 执行分析
-        error_count = log_content.count("ERROR")
-        
-        # 返回结果
-        results.append(AnalysisResult(
-            status="pass" if error_count == 0 else "fail",
-            message=f"发现 {error_count} 个错误",
-            data={"error_count": error_count}
-        ))
+        if context.log_file_path:
+            with open(context.log_file_path, 'r') as f:
+                log_content = f.read()
+            
+            # 执行分析
+            error_count = log_content.count("ERROR")
+            
+            # 返回结果
+            results.append(AnalysisResult(
+                status="pass" if error_count == 0 else "fail",
+                message=f"发现 {error_count} 个错误",
+                data={"error_count": error_count}
+            ))
         
         return results
 
@@ -137,79 +285,28 @@ ai = BitwiseAI()
 ai.load_log_file("test.log")
 ai.register_task(MyLogAnalysisTask())
 results = ai.execute_all_tasks()
+
+# 生成报告
+ai.save_report("report.md", format="markdown")
 ```
 
-### 4. 注册自定义工具
+### 示例 3: 使用 Skills 扩展功能
 
 ```python
 from bitwiseai import BitwiseAI
 
 ai = BitwiseAI()
 
-# 注册 Python 函数
-def parse_hex(hex_str):
-    return int(hex_str, 16)
+# 查看可用 Skills
+skills = ai.list_skills()
+print(f"可用 Skills: {skills}")
 
-ai.register_tool(parse_hex, description="解析十六进制")
+# 加载 Skill
+ai.load_skill("hex_converter")
 
-# 使用工具
-result = ai.invoke_tool("parse_hex", "0xFF")
-print(f"结果: {result}")  # 255
-```
-
-## 📚 使用示例
-
-### 示例 1: PE 寄存器指令验证
-
-```python
-# examples/pe_instruction_verification.py
-from bitwiseai import BitwiseAI
-from bitwiseai.log_parser import LogParser
-from bitwiseai.verifier import InstructionVerifier
-from bitwiseai.interfaces import AnalysisTask
-
-class PEInstructionTask(AnalysisTask):
-    def __init__(self):
-        super().__init__(
-            parser=LogParser(),        # 使用内置解析器
-            verifier=InstructionVerifier()  # 使用内置验证器
-        )
-    
-    def analyze(self, context, parsed_data):
-        # 解析和验证 PE 指令
-        instructions = self.parser.instructions
-        verify_results = self.verifier.verify_all(instructions)
-        return [AnalysisResult(status=r.status.value, message=str(r)) 
-                for r in verify_results]
-
-# 运行
-ai = BitwiseAI()
-ai.load_log_file("pe_register.log")
-ai.register_task(PEInstructionTask())
-ai.execute_all_tasks()
-```
-
-### 示例 2: 自定义工具
-
-查看 `examples/custom_tool_example.py` 了解如何：
-- 注册 Python 函数作为工具
-- 注册 Shell 命令作为工具
-- 在任务中调用工具
-
-### 示例 3: RAG 规范查询
-
-```python
-ai = BitwiseAI()
-
-# 加载硬件规范文档
-ai.load_specification("./docs/hardware_manual/")
-
-# 查询规范
-context = ai.query_specification("MUL 指令的 func_sel 参数含义")
-print(context)
-
-# 使用 RAG 对话
-response = ai.chat("如何验证 SHIFT 指令？", use_rag=True)
+# 在对话中使用工具（自动调用）
+response = ai.chat("将十六进制 0xFF 转换为十进制", use_tools=True)
+print(response)
 ```
 
 ## 🏗️ 架构设计
@@ -276,11 +373,13 @@ class TaskInterface(ABC):
 
 ## 🛠️ API 参考
 
-### 工具管理
+### Skills 管理
 
-- `register_tool(tool, name, description)` - 注册工具
-- `invoke_tool(name, *args, **kwargs)` - 调用工具
-- `list_tools()` - 列出所有工具
+- `load_skill(name)` - 加载 Skill
+- `unload_skill(name)` - 卸载 Skill
+- `list_skills(loaded_only=False)` - 列出所有 Skills
+- `invoke_tool(name, *args, **kwargs)` - 调用工具（来自已加载的 Skills）
+- `list_tools()` - 列出所有可用工具
 
 ### 任务管理
 
@@ -289,11 +388,12 @@ class TaskInterface(ABC):
 - `execute_all_tasks()` - 执行所有任务
 - `list_tasks()` - 列出所有任务
 
-### 日志分析
+### 文档和 RAG
 
-- `load_log_file(file_path)` - 加载日志文件
-- `load_specification(spec_path)` - 加载规范文档
-- `query_specification(query, top_k)` - 查询规范文档
+- `load_documents(folder_path, skip_duplicates=True)` - 加载文档到向量数据库
+- `load_specification(spec_path)` - 加载规范文档（文件或目录）
+- `query_specification(query, top_k=5)` - 查询规范文档
+- `load_log_file(file_path)` - 加载日志文件（用于任务分析）
 - `ask_about_log(question)` - 询问关于日志的问题
 
 ### 报告生成
@@ -303,29 +403,37 @@ class TaskInterface(ABC):
 
 ### LLM 对话
 
-- `chat(query, use_rag)` - 对话
-- `analyze_with_llm(prompt, use_rag)` - AI 辅助分析
+- `chat(query, use_rag=True, use_tools=True)` - 对话（支持 RAG 和工具调用）
+- `chat_stream(query, use_rag=True, use_tools=True)` - 流式对话
+- `analyze_with_llm(prompt, use_rag=True)` - AI 辅助分析
 
 ## 📁 项目结构
 
 ```
 bitwiseai/
-├── __init__.py           # 包入口
-├── bitwiseai.py          # 核心类
-├── interfaces.py         # 接口定义
-├── tools.py              # 工具系统
-├── reporter.py           # 报告生成器
-├── llm.py                # LLM 封装
-├── embedding.py          # Embedding 封装
-├── vector_database.py    # 向量数据库
-├── utils.py              # 工具函数
-├── log_parser.py         # 示例：日志解析器
-└── verifier.py           # 示例：指令验证器
+├── __init__.py              # 包入口
+├── bitwiseai.py             # 核心类
+├── cli.py                   # 命令行接口
+├── interfaces.py            # 接口定义（LogParserInterface, VerifierInterface, TaskInterface）
+├── llm.py                   # LLM 封装
+├── embedding.py             # Embedding 封装
+├── vector_database.py       # 向量数据库（Milvus）
+├── utils.py                 # 工具函数
+├── core/                    # 核心模块
+│   ├── chat_engine.py       # 聊天引擎
+│   ├── rag_engine.py        # RAG 引擎
+│   ├── skill_manager.py     # Skill 管理器
+│   └── document_manager.py  # 文档管理器
+└── skills/                  # Skills 目录
+    ├── asm_parser/          # ASM 解析 Skill
+    └── builtin/             # 内置 Skills
+        └── hex_converter/   # 十六进制转换 Skill
 
 examples/
-├── custom_task_example.py           # 自定义任务示例
-├── custom_tool_example.py           # 自定义工具示例
-└── pe_instruction_verification.py   # PE 指令验证示例
+├── basic_usage.py           # 基础使用示例
+├── rag_usage.py             # RAG 使用示例
+├── custom_skill_example.py  # 自定义 Skill 示例
+└── document_export.py      # 文档导出示例
 ```
 
 ## ⚙️ 配置

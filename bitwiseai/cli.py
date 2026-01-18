@@ -16,8 +16,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from .bitwiseai import BitwiseAI
-from .log_parser import LogParser
-from .verifier import InstructionVerifier
 from .interfaces import AnalysisTask
 
 
@@ -86,55 +84,7 @@ def analyze_mode(args):
             ai.load_specification(args.spec)
         
         # 根据分析类型执行
-        if args.type == "pe_instruction":
-            # PE 指令验证
-            print("\n执行 PE 指令验证...")
-            
-            from .interfaces import AnalysisTask
-            
-            class PEInstructionTask(AnalysisTask):
-                def __init__(self):
-                    super().__init__(
-                        name="PE_Instruction_Verification",
-                        parser=LogParser(),
-                        verifier=InstructionVerifier()
-                    )
-                
-                def analyze(self, context, parsed_data):
-                    results = []
-                    if isinstance(self.parser, LogParser):
-                        instructions = self.parser.instructions
-                        if isinstance(self.verifier, InstructionVerifier):
-                            verify_results = self.verifier.verify_all(instructions)
-                            from .interfaces import AnalysisResult
-                            for vr in verify_results:
-                                results.append(AnalysisResult(
-                                    status=vr.status.value.lower(),
-                                    message=str(vr),
-                                    data={}
-                                ))
-                    return results
-            
-            task = PEInstructionTask()
-            ai.register_task(task)
-            results = ai.execute_task(task)
-            
-            # 打印结果
-            print(f"\n分析完成，共 {len(results)} 条结果")
-            
-            fail_count = sum(1 for r in results if r.status == "fail")
-            pass_count = sum(1 for r in results if r.status == "pass")
-            
-            print(f"  通过: {pass_count}")
-            print(f"  失败: {fail_count}")
-            
-            if args.show_details:
-                print("\n详细结果:")
-                for i, result in enumerate(results, 1):
-                    if result.status == "fail":
-                        print(f"  [{i}] {result.message}")
-        
-        elif args.type == "custom":
+        if args.type == "custom":
             # 自定义分析
             if args.query:
                 print(f"\n使用 LLM 分析日志...")
@@ -253,6 +203,152 @@ def tool_mode(args):
         sys.exit(1)
 
 
+def generate_config_mode(args):
+    """生成配置文件模式"""
+    import json
+    
+    print("=" * 60)
+    print("BitwiseAI 配置生成器")
+    print("=" * 60)
+    print()
+    
+    # 展开配置路径
+    config_path = os.path.expanduser(args.config)
+    config_dir = os.path.dirname(config_path)
+    
+    # 创建配置目录（如果不存在）
+    os.makedirs(config_dir, exist_ok=True)
+    
+    # 检查配置文件是否已存在
+    if os.path.exists(config_path):
+        response = input(f"配置文件已存在: {config_path}\n是否覆盖? (y/N): ").strip().lower()
+        if response != 'y':
+            print("已取消操作")
+            return
+    
+    config = {}
+    
+    # LLM 配置
+    print("LLM 配置:")
+    print("-" * 40)
+    llm_api_key = input("LLM API Key: ").strip()
+    if not llm_api_key:
+        print("错误: LLM API Key 不能为空", file=sys.stderr)
+        sys.exit(1)
+    
+    llm_base_url = input("LLM Base URL (如 https://api.openai.com/v1): ").strip()
+    if not llm_base_url:
+        print("错误: LLM Base URL 不能为空", file=sys.stderr)
+        sys.exit(1)
+    
+    llm_model = input("LLM 模型名称 (默认: MiniMax-M2.1): ").strip()
+    if not llm_model:
+        llm_model = "MiniMax-M2.1"
+    
+    llm_temperature = input("LLM Temperature (默认: 0.7): ").strip()
+    if not llm_temperature:
+        llm_temperature = 0.7
+    else:
+        try:
+            llm_temperature = float(llm_temperature)
+        except ValueError:
+            llm_temperature = 0.7
+    
+    config["llm"] = {
+        "api_key": llm_api_key,
+        "base_url": llm_base_url,
+        "model": llm_model,
+        "temperature": llm_temperature
+    }
+    print()
+    
+    # Embedding 配置
+    print("Embedding 配置:")
+    print("-" * 40)
+    embedding_api_key = input("Embedding API Key: ").strip()
+    if not embedding_api_key:
+        print("错误: Embedding API Key 不能为空", file=sys.stderr)
+        sys.exit(1)
+    
+    embedding_base_url = input("Embedding Base URL: ").strip()
+    if not embedding_base_url:
+        print("错误: Embedding Base URL 不能为空", file=sys.stderr)
+        sys.exit(1)
+    
+    embedding_model = input("Embedding 模型名称 (默认: Qwen/Qwen3-Embedding-8B): ").strip()
+    if not embedding_model:
+        embedding_model = "Qwen/Qwen3-Embedding-8B"
+    
+    config["embedding"] = {
+        "api_key": embedding_api_key,
+        "base_url": embedding_base_url,
+        "model": embedding_model
+    }
+    print()
+    
+    # Vector DB 配置
+    print("向量数据库配置:")
+    print("-" * 40)
+    db_file = input(f"数据库文件路径 (默认: ~/.bitwiseai/milvus_data.db): ").strip()
+    if not db_file:
+        db_file = "~/.bitwiseai/milvus_data.db"
+    
+    collection_name = input("集合名称 (默认: bitwiseai_specs): ").strip()
+    if not collection_name:
+        collection_name = "bitwiseai_specs"
+    
+    embedding_dim = input("Embedding 维度 (默认: 4096): ").strip()
+    if not embedding_dim:
+        embedding_dim = 4096
+    else:
+        try:
+            embedding_dim = int(embedding_dim)
+        except ValueError:
+            embedding_dim = 4096
+    
+    similarity_threshold = input("相似度阈值 (默认: 0.85): ").strip()
+    if not similarity_threshold:
+        similarity_threshold = 0.85
+    else:
+        try:
+            similarity_threshold = float(similarity_threshold)
+        except ValueError:
+            similarity_threshold = 0.85
+    
+    config["vector_db"] = {
+        "db_file": db_file,
+        "collection_name": collection_name,
+        "embedding_dim": embedding_dim,
+        "similarity_threshold": similarity_threshold,
+        "save_chunks": False,
+        "chunks_dir": "~/.bitwiseai/chunks"
+    }
+    print()
+    
+    # 系统提示词
+    print("系统配置:")
+    print("-" * 40)
+    system_prompt = input("系统提示词 (默认: 使用内置提示词，直接回车跳过): ").strip()
+    if system_prompt:
+        config["system_prompt"] = system_prompt
+    else:
+        # 使用默认提示词
+        config["system_prompt"] = "你是 BitwiseAI，专注于硬件指令验证和调试日志分析的 AI 助手。你可以帮助用户：\n1. 解析和分析硬件调试日志\n2. 验证指令计算的正确性\n3. 发现潜在的问题和异常\n4. 提供基于规范文档的专业建议"
+    
+    # 保存配置文件
+    try:
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        
+        print()
+        print("=" * 60)
+        print(f"✓ 配置文件已生成: {config_path}")
+        print("=" * 60)
+    except Exception as e:
+        print(f"错误: 无法保存配置文件: {str(e)}", file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(
@@ -320,9 +416,9 @@ def main():
     )
     analyze_parser.add_argument(
         "--type",
-        choices=["pe_instruction", "custom"],
+        choices=["custom"],
         default="custom",
-        help="分析类型"
+        help="分析类型（目前仅支持 custom，用户需要实现自己的任务）"
     )
     analyze_parser.add_argument(
         "--spec",
@@ -435,8 +531,18 @@ def main():
         action="store_true",
         help="工具模式（快捷方式）"
     )
+    parser.add_argument(
+        "--generate-config",
+        action="store_true",
+        help="交互式生成配置文件"
+    )
     
     args = parser.parse_args()
+    
+    # 处理生成配置命令（优先级最高）
+    if args.generate_config:
+        generate_config_mode(args)
+        sys.exit(0)
     
     # 处理快捷方式
     if args.direct_chat is not None:
