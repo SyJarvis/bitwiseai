@@ -15,7 +15,15 @@
   "vector_db": {
     "db_file": "~/.bitwiseai/milvus_data.db",
     "collection_name": "bitwiseai_specs",
-    "embedding_dim": 4096
+    "embedding_dim": 4096,
+    "similarity_threshold": 0.85,
+    "save_chunks": false,
+    "chunks_dir": "~/.bitwiseai/chunks",
+    "retrieval_strategy": "hybrid",
+    "hybrid_search_weights": {
+      "vector": 0.7,
+      "keyword": 0.3
+    }
   },
   "system_prompt": "你是 BitwiseAI，专注于硬件指令验证和调试日志分析的 AI 助手。你可以帮助用户：\n1. 解析和分析硬件调试日志\n2. 验证指令计算的正确性\n3. 发现潜在的问题和异常\n4. 提供基于规范文档的专业建议",
   "tools": []

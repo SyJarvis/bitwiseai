@@ -17,8 +17,12 @@ from .interfaces import (
     AnalysisTask,
     AnalysisResult,
 )
-from .tools import ToolRegistry, Tool, register_builtin_tools
+# 旧的工具系统已废弃，请使用 Skills 系统
+# from .tools import ToolRegistry, Tool, register_builtin_tools
 from .reporter import Reporter
+
+# 导出核心模块（Skills 系统）
+from .core import SkillManager, Skill, RAGEngine, ChatEngine
 
 # 可选导出：内置实现（作为参考）
 from .log_parser import LogParser, Instruction, InstructionType
@@ -35,10 +39,11 @@ __all__ = [
     "AnalysisTask",
     "AnalysisResult",
     
-    # 工具系统
-    "ToolRegistry",
-    "Tool",
-    "register_builtin_tools",
+    # Skills 系统
+    "SkillManager",
+    "Skill",
+    "RAGEngine",
+    "ChatEngine",
     
     # 报告生成
     "Reporter",

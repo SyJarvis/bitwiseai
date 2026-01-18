@@ -1,0 +1,51 @@
+{
+  "name": "hex_converter",
+  "version": "1.0.0",
+  "description": "十六进制、二进制、十进制转换工具集",
+  "author": "BitwiseAI",
+  "tools": [
+    {
+      "name": "hex_to_decimal",
+      "module": "tools",
+      "function": "hex_to_decimal",
+      "description": "将十六进制字符串转换为十进制整数"
+    },
+    {
+      "name": "decimal_to_hex",
+      "module": "tools",
+      "function": "decimal_to_hex",
+      "description": "将十进制整数转换为十六进制字符串"
+    },
+    {
+      "name": "binary_to_decimal",
+      "module": "tools",
+      "function": "binary_to_decimal",
+      "description": "将二进制字符串转换为十进制整数"
+    },
+    {
+      "name": "decimal_to_binary",
+      "module": "tools",
+      "function": "decimal_to_binary",
+      "description": "将十进制整数转换为二进制字符串"
+    },
+    {
+      "name": "hex_to_binary",
+      "module": "tools",
+      "function": "hex_to_binary",
+      "description": "将十六进制字符串转换为二进制字符串"
+    },
+    {
+      "name": "binary_to_hex",
+      "module": "tools",
+      "function": "binary_to_hex",
+      "description": "将二进制字符串转换为十六进制字符串"
+    }
+  ],
+  "dependencies": [],
+  "resources": [],
+  "hooks": {
+    "on_load": null,
+    "on_unload": null
+  }
+}
+

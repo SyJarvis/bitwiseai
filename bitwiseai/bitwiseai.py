@@ -13,11 +13,13 @@ from dotenv import load_dotenv
 # 加载环境变量
 load_dotenv()
 
+from typing import Iterator
 from .llm import LLM
 from .embedding import Embedding
 from .vector_database import MilvusDB
 from .utils import DocumentLoader, TextSplitter
-from .tools import ToolRegistry, register_builtin_tools
+from .core import SkillManager, RAGEngine, ChatEngine
+from .core.document_manager import DocumentManager
 from .interfaces import TaskInterface, AnalysisResult
 from .reporter import Reporter
 
@@ -106,17 +108,44 @@ class BitwiseAI:
         self.document_loader = DocumentLoader()
         self.text_splitter = TextSplitter()
         
-        # 工具注册器
-        self.tool_registry = ToolRegistry()
-        register_builtin_tools(self.tool_registry)
+        # 创建文档管理器配置
+        doc_manager_config = {
+            "similarity_threshold": vector_config.get("similarity_threshold", 0.85),
+            "save_chunks": vector_config.get("save_chunks", False),
+            "chunks_dir": os.path.expanduser(vector_config.get("chunks_dir", "~/.bitwiseai/chunks"))
+        }
         
-        # 从配置文件加载工具
-        if "tools" in self.config and self.config["tools"]:
-            for tool_config in self.config["tools"]:
-                try:
-                    self.tool_registry.register_from_config(tool_config)
-                except Exception as e:
-                    print(f"警告: 加载工具失败: {str(e)}")
+        # 初始化文档管理器
+        self.document_manager = DocumentManager(
+            vector_db=self.vector_db,
+            document_loader=self.document_loader,
+            text_splitter=self.text_splitter,
+            config=doc_manager_config
+        )
+        
+        # 初始化 RAG 引擎（使用DocumentManager）
+        self.rag_engine = RAGEngine(
+            vector_db=self.vector_db,
+            document_manager=self.document_manager
+        )
+        
+        # 初始化 Skill 管理器
+        self.skill_manager = SkillManager()
+        self.skill_manager.scan_skills()
+        
+        # 自动加载内置 skills
+        builtin_skills = ["hex_converter", "asm_parser"]
+        for skill_name in builtin_skills:
+            if skill_name in self.skill_manager.list_available_skills():
+                self.skill_manager.load_skill(skill_name)
+        
+        # 初始化聊天引擎
+        self.chat_engine = ChatEngine(
+            llm=self.llm,
+            rag_engine=self.rag_engine,
+            skill_manager=self.skill_manager,
+            system_prompt=self.system_prompt
+        )
         
         # 任务管理
         self.tasks: List[TaskInterface] = []
@@ -134,7 +163,8 @@ class BitwiseAI:
         print(f"  Embedding 模型: {embedding_config.get('model')}")
         print(f"  向量库: {db_file}")
         print(f"  集合: {collection_name}")
-        print(f"  已注册工具: {len(self.tool_registry.list_tools())}")
+        print(f"  可用 Skills: {len(self.skill_manager.list_available_skills())}")
+        print(f"  已加载 Skills: {len(self.skill_manager.list_loaded_skills())}")
         print("=" * 50)
 
     def _load_config(self) -> dict:
@@ -154,42 +184,21 @@ class BitwiseAI:
         self.system_prompt = prompt
         print(f"系统提示词已更新: {prompt[:50]}...")
 
-    def load_documents(self, folder_path: str) -> int:
+    def load_documents(self, folder_path: str, skip_duplicates: bool = True) -> Dict[str, Any]:
         """
         加载文件夹中的所有文档
 
         Args:
             folder_path: 文件夹路径
+            skip_duplicates: 是否跳过重复文档
 
         Returns:
-            加载的文档片段数量
+            包含统计信息的字典：
+                - total: 总文档片段数
+                - inserted: 实际插入的片段数
+                - skipped: 跳过的重复片段数
         """
-        if not os.path.exists(folder_path):
-            raise ValueError(f"文件夹不存在: {folder_path}")
-
-        print(f"📂 加载文档目录: {folder_path}")
-
-        # 加载文档
-        documents = self.document_loader.load_folder(folder_path)
-
-        if not documents:
-            print("⚠️  没有找到可加载的文档")
-            return 0
-
-        # 切分文档
-        chunks = []
-        for doc in documents:
-            doc_chunks = self.text_splitter.split(doc)
-            chunks.extend(doc_chunks)
-
-        print(f"📄 找到 {len(chunks)} 个文档片段")
-
-        # 插入向量数据库
-        if chunks:
-            self.vector_db.add_texts(chunks)
-            print(f"✓ 已插入 {len(chunks)} 个片段到向量库")
-
-        return len(chunks)
+        return self.rag_engine.load_documents(folder_path, skip_duplicates=skip_duplicates)
 
     def add_text(self, text: str) -> int:
         """
@@ -201,128 +210,96 @@ class BitwiseAI:
         Returns:
             插入的片段数量
         """
-        if not text or not text.strip():
-            print("⚠️  文本内容为空")
-            return 0
+        return self.rag_engine.add_text(text)
 
-        # 切分文本
-        chunks = self.text_splitter.split(text)
-
-        if chunks:
-            self.vector_db.add_texts(chunks)
-            print(f"✓ 已插入 {len(chunks)} 个片段到向量库")
-
-        return len(chunks)
-
-    def chat(self, query: str, use_rag: bool = True) -> str:
+    def chat(self, query: str, use_rag: bool = True, use_tools: bool = True) -> str:
         """
-        对话方法
+        对话方法（非流式）
 
         Args:
             query: 用户问题
             use_rag: 是否使用 RAG 模式（默认 True）
+            use_tools: 是否使用工具（默认 True）
 
         Returns:
             LLM 生成的回答
         """
-        if use_rag:
-            return self._chat_with_rag(query)
-        else:
-            return self._chat_with_llm(query)
+        return self.chat_engine.chat(query, use_rag=use_rag, use_tools=use_tools)
 
-    def _chat_with_rag(self, query: str) -> str:
+    def chat_stream(
+        self,
+        query: str,
+        use_rag: bool = True,
+        use_tools: bool = True
+    ) -> Iterator[str]:
         """
-        RAG 模式对话
+        流式对话方法
 
-        步骤：
-        1. 检索相关文档
-        2. 构建提示词
-        3. 调用 LLM 生成回答
+        Args:
+            query: 用户问题
+            use_rag: 是否使用 RAG 模式（默认 True）
+            use_tools: 是否使用工具（默认 True）
+
+        Yields:
+            每个 token 的字符串片段
         """
-        # 检索相关文档
-        context = self.vector_db.search(query, top_k=5)
-
-        if context:
-            prompt = f"""基于以下上下文回答问题。如果上下文中没有相关信息，请直接说不知道。
-
-上下文:
-{context}
-
-问题: {query}
-
-回答:"""
-        else:
-            # 没有检索到相关文档，退回纯 LLM 模式
-            print("⚠️  未检索到相关文档，退回纯 LLM 模式")
-            return self._chat_with_llm(query)
-
-        # 调用 LLM
-        return self.llm.invoke(prompt)
-
-    def _chat_with_llm(self, query: str) -> str:
-        """
-        纯 LLM 模式对话
-        """
-        if self.system_prompt:
-            prompt = f"{self.system_prompt}\n\n用户: {query}"
-        else:
-            prompt = query
-
-        return self.llm.invoke(prompt)
+        yield from self.chat_engine.chat_stream(query, use_rag=use_rag, use_tools=use_tools)
 
     def clear_vector_db(self):
         """
         清空向量数据库
         """
-        self.vector_db.clear()
+        self.rag_engine.clear()
         print("✓ 向量数据库已清空")
     
-    # ========== 工具管理 API ==========
+    # ========== Skill 管理 API ==========
     
-    def register_tool(
-        self,
-        tool: Union[Callable, Dict[str, Any]],
-        name: Optional[str] = None,
-        description: str = ""
-    ):
+    def load_skill(self, name: str) -> bool:
         """
-        注册自定义工具
+        加载 skill
         
         Args:
-            tool: 工具对象，可以是：
-                  - Python 函数
-                  - LangChain Tool
-                  - 配置字典
-            name: 工具名称（可选）
-            description: 工具描述（可选）
-        
-        示例:
-            # 注册 Python 函数
-            def my_parser(text):
-                return text.split()
-            ai.register_tool(my_parser, description="文本分割工具")
+            name: Skill 名称
             
-            # 注册配置化工具
-            ai.register_tool({
-                "type": "shell_command",
-                "name": "run_test",
-                "command": "python test.py {input}",
-                "description": "运行测试"
-            })
+        Returns:
+            是否加载成功
         """
-        if callable(tool):
-            self.tool_registry.register_function(tool, name, description)
-        elif isinstance(tool, dict):
-            self.tool_registry.register_from_config(tool)
-        else:
-            # 尝试作为 LangChain Tool 注册
-            self.tool_registry.register_langchain_tool(tool, name)
+        return self.skill_manager.load_skill(name)
+    
+    def unload_skill(self, name: str) -> bool:
+        """
+        卸载 skill
         
-        print(f"✓ 工具已注册: {name or getattr(tool, '__name__', 'unknown')}")
+        Args:
+            name: Skill 名称
+            
+        Returns:
+            是否卸载成功
+        """
+        return self.skill_manager.unload_skill(name)
+    
+    def list_skills(self, loaded_only: bool = False) -> List[str]:
+        """
+        列出所有 skills
+        
+        Args:
+            loaded_only: 是否只列出已加载的 skills
+            
+        Returns:
+            Skill 名称列表
+        """
+        if loaded_only:
+            return self.skill_manager.list_loaded_skills()
+        else:
+            return self.skill_manager.list_available_skills()
+    
+    # ========== 向后兼容的工具管理 API ==========
     
     def invoke_tool(self, name: str, *args, **kwargs) -> Any:
         """
-        调用已注册的工具
+        调用工具（向后兼容）
+        
+        注意：此方法已废弃，请使用 skill 系统
         
         Args:
             name: 工具名称
@@ -332,16 +309,30 @@ class BitwiseAI:
         Returns:
             工具执行结果
         """
-        return self.tool_registry.invoke_tool(name, *args, **kwargs)
+        # 在所有已加载的 skills 中查找工具
+        for skill_name in self.skill_manager.list_loaded_skills():
+            skill = self.skill_manager.get_skill(skill_name)
+            if skill and skill.loaded and name in skill.tools:
+                func = skill.tools[name]["function"]
+                return func(*args, **kwargs)
+        
+        raise ValueError(f"工具不存在: {name}")
     
     def list_tools(self) -> List[str]:
         """
-        列出所有已注册的工具
+        列出所有工具（向后兼容）
+        
+        注意：此方法已废弃，请使用 skill 系统
         
         Returns:
             工具名称列表
         """
-        return self.tool_registry.list_tools()
+        tool_names = []
+        for skill_name in self.skill_manager.list_loaded_skills():
+            skill = self.skill_manager.get_skill(skill_name)
+            if skill and skill.loaded:
+                tool_names.extend(skill.tools.keys())
+        return tool_names
     
     # ========== 任务管理 API ==========
     
@@ -457,16 +448,15 @@ class BitwiseAI:
     def query_specification(self, query: str, top_k: int = 5) -> str:
         """
         查询规范文档
-        
+
         Args:
             query: 查询内容
             top_k: 返回结果数量
-            
+
         Returns:
             相关文档内容
         """
-        context = self.vector_db.search(query, top_k=top_k)
-        return context
+        return self.rag_engine.search(query, top_k=top_k)
     
     # ========== 报告生成 API ==========
     

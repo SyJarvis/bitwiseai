@@ -4,7 +4,9 @@
 """
 import os
 import re
-from typing import List, Dict, Optional
+import time
+import hashlib
+from typing import List, Dict, Optional, Any
 from PyPDF2 import PdfReader
 
 
@@ -18,7 +20,7 @@ class DocumentLoader:
     def __init__(self):
         self.supported_formats = ["txt", "md", "pdf"]
 
-    def load_folder(self, folder_path: str) -> List[str]:
+    def load_folder(self, folder_path: str) -> List[Dict[str, Any]]:
         """
         加载文件夹中的所有文档
 
@@ -26,7 +28,12 @@ class DocumentLoader:
             folder_path: 文件夹路径
 
         Returns:
-            文档内容列表
+            文档对象列表，每个对象包含：
+                - content: 文档内容
+                - file_path: 文件路径
+                - file_hash: 文件哈希值
+                - file_size: 文件大小
+                - timestamp: 加载时间戳
         """
         if not os.path.exists(folder_path):
             raise ValueError(f"文件夹不存在: {folder_path}")
@@ -42,11 +49,41 @@ class DocumentLoader:
                     try:
                         content = self.load_file(file_path)
                         if content:
-                            documents.append(content)
+                            # 计算文件哈希
+                            file_hash = self._calculate_file_hash(file_path)
+                            file_size = os.path.getsize(file_path)
+                            
+                            documents.append({
+                                "content": content,
+                                "file_path": file_path,
+                                "file_hash": file_hash,
+                                "file_size": file_size,
+                                "timestamp": time.time()
+                            })
                     except Exception as e:
                         print(f"⚠️  加载文件失败 {file_path}: {e}")
 
         return documents
+
+    def _calculate_file_hash(self, file_path: str) -> str:
+        """
+        计算文件内容的哈希值
+
+        Args:
+            file_path: 文件路径
+
+        Returns:
+            文件的SHA256哈希值
+        """
+        sha256_hash = hashlib.sha256()
+        try:
+            with open(file_path, "rb") as f:
+                for byte_block in iter(lambda: f.read(4096), b""):
+                    sha256_hash.update(byte_block)
+            return sha256_hash.hexdigest()
+        except Exception as e:
+            print(f"⚠️  计算文件哈希失败 {file_path}: {e}")
+            return ""
 
     def load_file(self, file_path: str) -> Optional[str]:
         """

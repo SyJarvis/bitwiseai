@@ -359,6 +359,17 @@ examples/
 
 MIT License
 
+## 📚 文档
+
+详细的文档和指南：
+
+- [使用指南](docs/USAGE_GUIDE.md) - 基本使用方法和示例
+- [**文档管理指南**](docs/DOCUMENT_MANAGEMENT_GUIDE.md) - 文档加载、切分、检索、导出完整指南 ⭐
+- [CLI 指南](docs/CLI_GUIDE.md) - 命令行工具使用说明
+- [架构文档](docs/ARCHITECTURE.md) - 系统架构和设计理念
+- [依赖说明](docs/DEPENDENCIES.md) - 依赖包和版本要求
+- [**Skills 开发指南**](docs/SKILLS_GUIDE.md) - 如何创建和添加新的 Skills ⭐
+
 ## 🔗 相关资源
 
 - [LangChain 文档](https://python.langchain.com/)

@@ -27,8 +27,8 @@ def chat_mode(args):
         ai = BitwiseAI(config_path=args.config)
         
         if args.query:
-            # 单次查询
-            response = ai.chat(args.query, use_rag=args.use_rag)
+            # 单次查询（默认启用工具调用）
+            response = ai.chat(args.query, use_rag=args.use_rag, use_tools=True)
             print(response)
         else:
             # 交互模式
@@ -49,7 +49,7 @@ def chat_mode(args):
                         print("再见！")
                         break
                     
-                    response = ai.chat(user_input, use_rag=args.use_rag, history=history)
+                    response = ai.chat(user_input, use_rag=args.use_rag, use_tools=True, history=history)
                     print(f"\nAI: {response}\n")
                     
                     # 更新历史
@@ -186,16 +186,50 @@ def query_spec_mode(args):
 
 
 def tool_mode(args):
-    """工具管理模式"""
+    """Skill 和工具管理模式"""
     try:
         ai = BitwiseAI(config_path=args.config)
         
-        if args.list:
+        if args.list_skills:
+            # 列出所有 skills
+            skills = ai.list_skills(loaded_only=args.loaded_only)
+            print(f"可用 Skills ({len(skills)} 个):")
+            for i, skill_name in enumerate(skills, 1):
+                skill = ai.skill_manager.get_skill(skill_name)
+                if skill:
+                    status = "✅ 已加载" if skill.loaded else "⏸️ 未加载"
+                    print(f"  {i}. {skill_name} ({status}) - {skill.description or '无描述'}")
+                else:
+                    print(f"  {i}. {skill_name} (❓ 未知)")
+        
+        elif args.load_skill:
+            # 加载 skill
+            skill_name = args.load_skill
+            print(f"加载 Skill: {skill_name}")
+            success = ai.load_skill(skill_name)
+            if success:
+                print(f"✅ Skill '{skill_name}' 加载成功")
+            else:
+                print(f"❌ Skill '{skill_name}' 加载失败")
+                sys.exit(1)
+        
+        elif args.unload_skill:
+            # 卸载 skill
+            skill_name = args.unload_skill
+            print(f"卸载 Skill: {skill_name}")
+            success = ai.unload_skill(skill_name)
+            if success:
+                print(f"✅ Skill '{skill_name}' 卸载成功")
+            else:
+                print(f"❌ Skill '{skill_name}' 卸载失败")
+                sys.exit(1)
+        
+        elif args.list_tools:
             # 列出所有工具
             tools = ai.list_tools()
-            print(f"已注册 {len(tools)} 个工具:")
-            for i, tool in enumerate(tools, 1):
-                print(f"  {i}. {tool}")
+            print(f"可用工具 ({len(tools)} 个，来自已加载的 Skills):")
+            for i, tool_name in enumerate(tools, 1):
+                print(f"  {i}. {tool_name}")
         
         elif args.invoke:
             # 调用工具
@@ -209,11 +243,13 @@ def tool_mode(args):
             print(f"\n结果: {result}")
         
         else:
-            print("错误: 需要 --list 或 --invoke 参数", file=sys.stderr)
+            print("错误: 需要指定操作（--list-skills, --load-skill, --unload-skill, --list-tools, --invoke）", file=sys.stderr)
             sys.exit(1)
     
     except Exception as e:
-        print(f"工具操作失败: {str(e)}", file=sys.stderr)
+        print(f"操作失败: {str(e)}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
@@ -238,9 +274,11 @@ def main():
   # 查询规范文档
   bitwiseai --query-spec --spec ./docs/ --query "MUL 指令参数"
   
-  # 工具管理
-  bitwiseai --tool --list
-  bitwiseai --tool --invoke hex_to_decimal 0xFF
+  # Skill 和工具管理
+  bitwiseai --tool --list-skills
+  bitwiseai --tool --load-skill asm_parser
+  bitwiseai --tool --list-tools
+  bitwiseai --tool --invoke parse_asm_instruction 0x0003000000000181
         """
     )
     
@@ -334,12 +372,30 @@ def main():
         help="使用 LLM 生成回答"
     )
     
-    # 工具模式
-    tool_parser = subparsers.add_parser("tool", help="工具管理")
+    # Skill 和工具模式
+    tool_parser = subparsers.add_parser("tool", help="Skill 和工具管理")
     tool_parser.add_argument(
-        "--list",
+        "--list-skills",
         action="store_true",
-        help="列出所有工具"
+        help="列出所有 Skills"
+    )
+    tool_parser.add_argument(
+        "--loaded-only",
+        action="store_true",
+        help="仅显示已加载的 Skills（与 --list-skills 一起使用）"
+    )
+    tool_parser.add_argument(
+        "--load-skill",
+        help="加载指定的 Skill"
+    )
+    tool_parser.add_argument(
+        "--unload-skill",
+        help="卸载指定的 Skill"
+    )
+    tool_parser.add_argument(
+        "--list-tools",
+        action="store_true",
+        help="列出所有工具（来自已加载的 Skills）"
     )
     tool_parser.add_argument(
         "--invoke",
