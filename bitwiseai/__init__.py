@@ -6,8 +6,8 @@ BitwiseAI - 硬件调试和日志分析的 AI 工具
 基于 LangChain，支持本地 Milvus 向量数据库
 """
 
-__version__ = "2.0.0"
-__author__ = "BitwiseAI"
+__version__ = "0.1.3"
+__author__ = "SyJarvis"
 
 from .bitwiseai import BitwiseAI
 from .interfaces import (
@@ -17,8 +17,6 @@ from .interfaces import (
     AnalysisTask,
     AnalysisResult,
 )
-# 旧的工具系统已废弃，请使用 Skills 系统
-# from .tools import ToolRegistry, Tool, register_builtin_tools
 
 # 导出核心模块（Skills 系统）
 from .core import SkillManager, Skill, RAGEngine, ChatEngine

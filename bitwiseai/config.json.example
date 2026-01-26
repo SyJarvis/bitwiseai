@@ -23,8 +23,18 @@
     "hybrid_search_weights": {
       "vector": 0.7,
       "keyword": 0.3
-    }
+    },
+    "enable_document_name_matching": true,
+    "document_name_match_threshold": 0.3
   },
   "system_prompt": "你是 BitwiseAI，专注于硬件指令验证和调试日志分析的 AI 助手。你可以帮助用户：\n1. 解析和分析硬件调试日志\n2. 验证指令计算的正确性\n3. 发现潜在的问题和异常\n4. 提供基于规范文档的专业建议",
+  "skills": {
+    "external_directories": [
+      "~/.bitwiseai/skills"
+    ],
+    "auto_load": ["asm-parser", "hex-converter"],
+    "index_to_vector_db": true,
+    "skill_collection_name": "bitwiseai_skills"
+  },
   "tools": []
 }

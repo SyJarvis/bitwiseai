@@ -142,8 +142,35 @@ class MilvusDB:
         if len(texts) != len(metadata):
             raise ValueError("文本列表和元数据列表长度必须一致")
 
-        # 生成嵌入
-        vectors = self.embedding_model.embed_documents(texts)
+        # 生成嵌入（添加进度显示和批量处理）
+        print(f"🔄 正在生成 {len(texts)} 个文本的嵌入向量...")
+        try:
+            # 批量处理，避免一次性处理过多文本
+            batch_size = 100  # 每批处理100个文本
+            all_vectors = []
+            total_batches = (len(texts) + batch_size - 1) // batch_size
+            
+            for i in range(0, len(texts), batch_size):
+                batch_texts = texts[i:i + batch_size]
+                batch_num = i // batch_size + 1
+                print(f"  📦 处理批次 {batch_num}/{total_batches} ({len(batch_texts)} 个文本)...", end='\r')
+                batch_vectors = self.embedding_model.embed_documents(batch_texts)
+                all_vectors.extend(batch_vectors)
+            
+            vectors = all_vectors
+            print(f"✅ 嵌入向量生成完成 ({len(vectors)} 个向量)                    ")
+        except Exception as e:
+            error_msg = str(e)
+            if "No embedding data received" in error_msg or "data" in error_msg.lower():
+                raise ValueError(
+                    f"嵌入向量生成失败：API 未返回数据。\n"
+                    f"请检查：\n"
+                    f"  1) Embedding API 配置是否正确\n"
+                    f"  2) API 地址和 Key 是否有效\n"
+                    f"  3) 网络连接是否正常\n"
+                    f"  4) 模型服务是否正常运行"
+                ) from e
+            raise
 
         # 准备数据
         # 注意：如果集合没有设置 auto_id，需要手动生成 id
@@ -160,6 +187,8 @@ class MilvusDB:
                 "vector": vector,
                 "text": text,
                 "source_file": meta.get("source_file", ""),
+                "file_name": meta.get("file_name", ""),  # 新增
+                "file_name_keywords": meta.get("file_name_keywords", ""),  # 新增
                 "file_hash": meta.get("file_hash", ""),
                 "chunk_index": meta.get("chunk_index", 0),
                 "chunk_total": meta.get("chunk_total", 1),
@@ -207,7 +236,8 @@ class MilvusDB:
         self,
         query: str,
         top_k: int = 5,
-        output_fields: Optional[List[str]] = None
+        output_fields: Optional[List[str]] = None,
+        filter_expr: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         搜索相似文本（返回元数据）
@@ -216,6 +246,7 @@ class MilvusDB:
             query: 查询文本
             top_k: 返回结果数量
             output_fields: 需要返回的字段列表，默认返回所有字段
+            filter_expr: Milvus filter表达式，用于过滤文档（例如：'source_file in ["doc1.md", "doc2.md"]'）
 
         Returns:
             检索结果列表，每个元素包含text和元数据
@@ -225,13 +256,16 @@ class MilvusDB:
 
         # 设置输出字段
         if output_fields is None:
-            output_fields = ["text", "source_file", "file_hash", "chunk_index", "chunk_total", "timestamp"]
+            output_fields = ["text", "source_file", "file_hash", "chunk_index", "chunk_total", "timestamp", "file_name"]
 
         # 搜索
         try:
+            # MilvusClient.search 的签名：search(collection_name, data, filter='', limit=10, output_fields=None, ...)
+            # 注意：参数名是 filter 而不是 expr
             search_res = self.client.search(
                 collection_name=self.collection_name,
                 data=[query_vector],
+                filter=filter_expr if filter_expr else '',  # filter表达式，使用 filter 参数
                 limit=top_k,
                 output_fields=output_fields
             )
@@ -329,7 +363,8 @@ class MilvusDB:
         top_k: int = 5,
         use_keyword: bool = True,
         vector_weight: float = 0.7,
-        keyword_weight: float = 0.3
+        keyword_weight: float = 0.3,
+        filter_expr: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         混合检索（向量搜索 + 关键词搜索）
@@ -340,18 +375,19 @@ class MilvusDB:
             use_keyword: 是否使用关键词搜索
             vector_weight: 向量搜索权重
             keyword_weight: 关键词搜索权重
+            filter_expr: Milvus filter表达式，用于过滤文档
 
         Returns:
             合并后的检索结果列表
         """
-        # 向量搜索
-        vector_results = self.search_with_metadata(query, top_k=top_k * 2)
+        # 向量搜索（使用filter）
+        vector_results = self.search_with_metadata(query, top_k=top_k * 2, filter_expr=filter_expr)
 
         if not use_keyword:
             return vector_results[:top_k]
 
-        # 关键词搜索（简单实现：在文本中搜索关键词）
-        keyword_results = self._keyword_search(query, top_k=top_k * 2)
+        # 关键词搜索（简单实现：在文本中搜索关键词，也使用相同的filter）
+        keyword_results = self._keyword_search(query, top_k=top_k * 2, filter_expr=filter_expr)
 
         # 合并结果
         combined = self._merge_search_results(
@@ -361,13 +397,14 @@ class MilvusDB:
 
         return combined[:top_k]
 
-    def _keyword_search(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
+    def _keyword_search(self, query: str, top_k: int = 10, filter_expr: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         关键词搜索（简单实现）
 
         Args:
             query: 查询文本
             top_k: 返回结果数量
+            filter_expr: Milvus filter表达式，用于过滤文档
 
         Returns:
             检索结果列表
@@ -375,13 +412,16 @@ class MilvusDB:
         # 简单实现：获取所有文档，按关键词匹配度排序
         # 注意：对于大数据集，这需要优化（如使用倒排索引）
         try:
+            # 构建查询参数
+            query_params = {
+                "collection_name": self.collection_name,
+                "filter": filter_expr if filter_expr else "",
+                "limit": min(1000, top_k * 20),  # 限制查询数量
+                "output_fields": ["text", "source_file", "file_hash", "chunk_index", "chunk_total", "timestamp", "file_name"]
+            }
+            
             # 获取所有文档（限制数量以避免性能问题）
-            query_result = self.client.query(
-                collection_name=self.collection_name,
-                filter="",
-                limit=min(1000, top_k * 20),  # 限制查询数量
-                output_fields=["text", "source_file", "file_hash", "chunk_index", "chunk_total", "timestamp"]
-            )
+            query_result = self.client.query(**query_params)
 
             if not query_result:
                 return []

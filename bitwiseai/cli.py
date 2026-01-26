@@ -192,8 +192,42 @@ def tool_mode(args):
             result = ai.invoke_tool(tool_name, *tool_args)
             print(f"\n结果: {result}")
         
+        elif args.add_dir:
+            # 添加外部技能目录
+            path = args.add_dir
+            print(f"添加技能目录: {path}")
+            success = ai.add_skills_directory(path)
+            if success:
+                print(f"✅ 技能目录 '{path}' 添加成功")
+                # 重新扫描技能
+                ai.skill_manager.scan_skills()
+                print(f"✓ 已重新扫描技能，当前可用技能: {len(ai.skill_manager.list_available_skills())} 个")
+            else:
+                print(f"❌ 技能目录 '{path}' 添加失败")
+                sys.exit(1)
+        
+        elif args.search:
+            # 搜索技能
+            query = args.search
+            top_k = args.top_k
+            print(f"搜索技能: {query}")
+            print(f"返回前 {top_k} 个结果\n")
+            
+            results = ai.search_skills(query, top_k=top_k)
+            if results:
+                print(f"找到 {len(results)} 个相关技能:\n")
+                for i, result in enumerate(results, 1):
+                    skill_name = result.get("skill_name", "未知")
+                    description = result.get("description", "无描述")
+                    score = result.get("score", 0.0)
+                    print(f"  {i}. {skill_name} (相似度: {score:.4f})")
+                    print(f"     描述: {description}")
+                    print()
+            else:
+                print("未找到相关技能")
+        
         else:
-            print("错误: 需要指定操作（--list-skills, --load-skill, --unload-skill, --list-tools, --invoke）", file=sys.stderr)
+            print("错误: 需要指定操作（--list-skills, --load-skill, --unload-skill, --list-tools, --invoke, --add-dir, --search）", file=sys.stderr)
             sys.exit(1)
     
     except Exception as e:
@@ -501,6 +535,20 @@ def main():
         "--args",
         nargs="*",
         help="工具参数"
+    )
+    tool_parser.add_argument(
+        "--add-dir",
+        help="添加外部技能目录"
+    )
+    tool_parser.add_argument(
+        "--search",
+        help="搜索技能（使用向量检索）"
+    )
+    tool_parser.add_argument(
+        "--top-k",
+        type=int,
+        default=5,
+        help="搜索返回结果数量（与 --search 一起使用）"
     )
     
     # 兼容旧的命令行格式（直接使用 --chat）

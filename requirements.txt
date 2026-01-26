@@ -6,5 +6,7 @@ pymilvus[milvus_lite]>=2.3.0
 numpy>=1.20.0
 python-dotenv>=1.0.0
 gradio==6.3.0
+PyYAML>=6.0.0  # 用于解析 SKILL.md 的 YAML frontmatter
+tqdm>=4.65.0  # 用于显示进度条
 # 可选依赖
 PyPDF2>=3.0.0  # 用于加载 PDF 规范文档，如果不需要可以注释掉

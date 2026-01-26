@@ -7,6 +7,7 @@
 import os
 import json
 import time
+import re
 from typing import List, Dict, Optional, Any
 from ..vector_database import MilvusDB
 from ..utils import DocumentLoader, TextSplitter
@@ -79,10 +80,20 @@ class DocumentManager:
         chunks_with_metadata = []
         for doc in documents:
             chunks = self.text_splitter.split(doc["content"])
+            
+            # 提取文档名（去掉路径和扩展名）
+            file_path = doc["file_path"]
+            file_name = os.path.splitext(os.path.basename(file_path))[0]  # 去掉扩展名
+            
+            # 提取文档名关键词
+            file_name_keywords = self._extract_filename_keywords(file_name)
+            
             for idx, chunk in enumerate(chunks):
                 chunks_with_metadata.append({
                     "text": chunk,
-                    "source_file": doc["file_path"],
+                    "source_file": file_path,
+                    "file_name": file_name,  # 新增：文档名
+                    "file_name_keywords": file_name_keywords,  # 新增：文档名关键词
                     "file_hash": doc["file_hash"],
                     "chunk_index": idx,
                     "chunk_total": len(chunks),
@@ -105,6 +116,8 @@ class DocumentManager:
             metadata = [
                 {
                     "source_file": c["source_file"],
+                    "file_name": c.get("file_name", ""),  # 新增
+                    "file_name_keywords": c.get("file_name_keywords", ""),  # 新增
                     "file_hash": c["file_hash"],
                     "chunk_index": c["chunk_index"],
                     "chunk_total": c["chunk_total"],
@@ -113,7 +126,15 @@ class DocumentManager:
                 }
                 for c in chunks_with_metadata
             ]
-            inserted_count = self.vector_db.add_texts_with_metadata(texts, metadata)
+            
+            # 添加进度显示
+            print(f"📚 开始处理 {len(texts)} 个文档片段...")
+            try:
+                inserted_count = self.vector_db.add_texts_with_metadata(texts, metadata)
+                print(f"✅ 成功插入 {inserted_count} 个文档片段到向量数据库")
+            except Exception as e:
+                print(f"❌ 插入文档失败: {e}")
+                raise
 
         # 5. 可选：保存切分结果
         if self.save_chunks and chunks_with_metadata:
@@ -154,10 +175,21 @@ class DocumentManager:
         # 准备元数据
         chunks_with_metadata = []
         current_time = time.time()
+        
+        # 提取文档名和关键词
+        if source:
+            file_name = os.path.splitext(os.path.basename(source))[0]
+            file_name_keywords = self._extract_filename_keywords(file_name)
+        else:
+            file_name = ""
+            file_name_keywords = ""
+        
         for idx, chunk in enumerate(chunks):
             chunks_with_metadata.append({
                 "text": chunk,
                 "source_file": source or "",
+                "file_name": file_name,  # 新增
+                "file_name_keywords": file_name_keywords,  # 新增
                 "file_hash": "",
                 "chunk_index": idx,
                 "chunk_total": len(chunks),
@@ -175,6 +207,8 @@ class DocumentManager:
             metadata = [
                 {
                     "source_file": c["source_file"],
+                    "file_name": c.get("file_name", ""),  # 新增
+                    "file_name_keywords": c.get("file_name_keywords", ""),  # 新增
                     "file_hash": c["file_hash"],
                     "chunk_index": c["chunk_index"],
                     "chunk_total": c["chunk_total"],
@@ -203,6 +237,7 @@ class DocumentManager:
         # 生成嵌入向量
         texts = [c["text"] for c in chunks]
         try:
+            print(f"🔄 正在生成嵌入向量进行去重检查 ({len(texts)} 个文本)...")
             vectors = self.vector_db.embedding_model.embed_documents(texts)
         except Exception as e:
             print(f"⚠️  生成嵌入向量失败: {e}")
@@ -248,6 +283,7 @@ class DocumentManager:
 
         # 生成嵌入向量
         try:
+            print(f"🔄 正在生成嵌入向量进行重复检查 ({len(texts)} 个文本)...")
             vectors = self.vector_db.embedding_model.embed_documents(texts)
         except Exception as e:
             print(f"⚠️  生成嵌入向量失败: {e}")
@@ -369,6 +405,39 @@ class DocumentManager:
             print(f"⚠️  获取统计信息失败: {e}")
             return {"total_chunks": 0, "collection_name": "", "db_file": ""}
 
+    def _extract_filename_keywords(self, file_name: str) -> str:
+        """
+        提取文档名关键词
+        
+        Args:
+            file_name: 文档名（不含扩展名）
+        
+        Returns:
+            关键词字符串（用空格分隔）
+        """
+        if not file_name:
+            return ""
+        
+        # 尝试使用jieba分词（如果可用）
+        try:
+            import jieba
+            # 分词
+            words = jieba.cut(file_name)
+            # 过滤停用词和单字符
+            stop_words = {'的', '是', '在', '有', '和', '与', '或', '但', '如果', '如何', '什么', '哪个', '哪些'}
+            keywords = [w for w in words if w not in stop_words and len(w) > 1]
+            return " ".join(keywords)
+        except ImportError:
+            # 如果没有jieba，使用简单方法：按常见分隔符分割
+            # 处理下划线、连字符、驼峰命名等
+            # 替换常见分隔符为空格
+            text = re.sub(r'[_\-\s]+', ' ', file_name)
+            # 处理驼峰命名（简单方法：在大写字母前加空格）
+            text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
+            # 分割并过滤
+            words = [w for w in text.split() if len(w) > 1]
+            return " ".join(words)
+    
     def _save_chunks(self, chunks: List[Dict[str, Any]]) -> None:
         """
         保存切分结果到文件（可选功能）

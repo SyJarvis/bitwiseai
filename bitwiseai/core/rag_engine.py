@@ -8,6 +8,7 @@ from typing import List, Optional, Dict, Any
 from ..vector_database import MilvusDB
 from ..utils import DocumentLoader, TextSplitter
 from .document_manager import DocumentManager
+from .document_matcher import DocumentNameMatcher
 
 
 class RAGEngine:
@@ -37,6 +38,7 @@ class RAGEngine:
             config: 配置字典（可选，用于创建DocumentManager）
         """
         self.vector_db = vector_db
+        self.config = config or {}
         
         # 创建或使用提供的DocumentManager
         if document_manager is not None:
@@ -48,6 +50,11 @@ class RAGEngine:
                 text_splitter=text_splitter,
                 config=config or {}
             )
+        
+        # 文档名匹配器（延迟初始化）
+        self.document_matcher: Optional[DocumentNameMatcher] = None
+        self.enable_document_name_matching = self.config.get("enable_document_name_matching", True)
+        self.document_name_match_threshold = self.config.get("document_name_match_threshold", 0.3)
 
     def load_documents(self, folder_path: str, skip_duplicates: bool = True) -> Dict[str, Any]:
         """
@@ -87,6 +94,8 @@ class RAGEngine:
     ) -> str:
         """
         搜索相关文档（调用MilvusDB混合检索）
+        
+        支持两阶段检索：先匹配文档名，再在匹配的文档范围内检索
 
         Args:
             query: 查询文本
@@ -96,11 +105,8 @@ class RAGEngine:
         Returns:
             检索到的文档内容（用换行符连接）
         """
-        if use_hybrid:
-            results = self.vector_db.hybrid_search(query, top_k=top_k, use_keyword=True)
-        else:
-            results = self.vector_db.search_with_metadata(query, top_k=top_k)
-        
+        # 使用search_with_metadata获取结果（包含文档名匹配逻辑），然后提取文本
+        results = self.search_with_metadata(query, top_k=top_k, use_hybrid=use_hybrid)
         return "\n".join([r["text"] for r in results])
 
     def search_with_metadata(
@@ -111,6 +117,8 @@ class RAGEngine:
     ) -> List[Dict[str, Any]]:
         """
         搜索相关文档（返回元数据）
+        
+        支持两阶段检索：先匹配文档名，再在匹配的文档范围内检索
 
         Args:
             query: 查询文本
@@ -120,10 +128,32 @@ class RAGEngine:
         Returns:
             检索结果列表，每个元素包含text和元数据
         """
+        # 文档名匹配（如果启用）
+        filter_expr = None
+        if self.enable_document_name_matching:
+            # 初始化文档名匹配器（如果未初始化）
+            if self.document_matcher is None:
+                self.document_matcher = DocumentNameMatcher(
+                    vector_db=self.vector_db,
+                    match_threshold=self.document_name_match_threshold
+                )
+            
+            # 匹配文档名
+            matched_files = self.document_matcher.match_documents(query)
+            
+            if matched_files:
+                # 构建Milvus filter表达式
+                # Milvus filter语法：使用 in 操作符，字符串需要用单引号
+                # 转义文件路径中的特殊字符（单引号需要转义）
+                escaped_files = [f"'{f.replace("'", "\\'")}'" for f in matched_files]
+                filter_expr = f'source_file in [{",".join(escaped_files)}]'
+                print(f"🔍 使用文档名过滤，限制在 {len(matched_files)} 个文档中检索")
+        
+        # 执行检索（带filter）
         if use_hybrid:
-            return self.vector_db.hybrid_search(query, top_k=top_k, use_keyword=True)
+            return self.vector_db.hybrid_search(query, top_k=top_k, use_keyword=True, filter_expr=filter_expr)
         else:
-            return self.vector_db.search_with_metadata(query, top_k=top_k)
+            return self.vector_db.search_with_metadata(query, top_k=top_k, filter_expr=filter_expr)
 
     def export_documents(self, output_dir: str, format: str = "separate_md") -> int:
         """

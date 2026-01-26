@@ -8,7 +8,7 @@ with open("README.md", mode="r", encoding="utf-8") as readme_file:
 
 setuptools.setup(
     name="BitwiseAI",
-    version="0.1.1",
+    version="0.1.3",
     description="BitwiseAI - 硬件调试和日志分析的 AI 工具",
     long_description=readme,
     long_description_content_type="text/markdown",

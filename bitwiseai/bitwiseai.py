@@ -18,7 +18,7 @@ from .llm import LLM
 from .embedding import Embedding
 from .vector_database import MilvusDB
 from .utils import DocumentLoader, TextSplitter
-from .core import SkillManager, RAGEngine, ChatEngine
+from .core import SkillManager, RAGEngine, ChatEngine, SkillIndexer
 from .core.document_manager import DocumentManager
 from .interfaces import TaskInterface, AnalysisResult
 
@@ -51,21 +51,46 @@ class BitwiseAI:
 
         # 加载配置
         self.config = self._load_config()
+        
+        # 加载默认配置文件（如果指定配置文件不同）
+        default_config_path = os.path.expanduser("~/.bitwiseai/config.json")
+        default_config = {}
+        if default_config_path != self.config_path and os.path.exists(default_config_path):
+            with open(default_config_path, 'r', encoding='utf-8') as f:
+                default_config = json.load(f)
 
-        # 获取 LLM API 配置（优先从配置文件，其次从环境变量）
+        # 获取 LLM API 配置（优先级：指定配置文件 > .env > 默认配置文件）
         llm_config = self.config.get("llm", {})
-        llm_api_key = llm_config.get("api_key") or os.getenv("LLM_API_KEY")
-        llm_base_url = llm_config.get("base_url") or os.getenv("LLM_BASE_URL")
+        default_llm_config = default_config.get("llm", {})
+        llm_api_key = (
+            llm_config.get("api_key") or 
+            os.getenv("LLM_API_KEY") or 
+            default_llm_config.get("api_key")
+        )
+        llm_base_url = (
+            llm_config.get("base_url") or 
+            os.getenv("LLM_BASE_URL") or 
+            default_llm_config.get("base_url")
+        )
 
         if not llm_api_key:
             raise ValueError("请在配置文件或 .env 文件中设置 LLM API Key")
         if not llm_base_url:
             raise ValueError("请在配置文件或 .env 文件中设置 LLM Base URL")
 
-        # 获取 Embedding API 配置（优先从配置文件，其次从环境变量）
+        # 获取 Embedding API 配置（优先级：指定配置文件 > .env > 默认配置文件）
         embedding_config = self.config.get("embedding", {})
-        embedding_api_key = embedding_config.get("api_key") or os.getenv("EMBEDDING_API_KEY")
-        embedding_base_url = embedding_config.get("base_url") or os.getenv("EMBEDDING_BASE_URL")
+        default_embedding_config = default_config.get("embedding", {})
+        embedding_api_key = (
+            embedding_config.get("api_key") or 
+            os.getenv("EMBEDDING_API_KEY") or 
+            default_embedding_config.get("api_key")
+        )
+        embedding_base_url = (
+            embedding_config.get("base_url") or 
+            os.getenv("EMBEDDING_BASE_URL") or 
+            default_embedding_config.get("base_url")
+        )
 
         if not embedding_api_key:
             raise ValueError("请在配置文件或 .env 文件中设置 Embedding API Key")
@@ -122,19 +147,55 @@ class BitwiseAI:
             config=doc_manager_config
         )
         
-        # 初始化 RAG 引擎（使用DocumentManager）
+        # RAG引擎配置（包含文档名匹配配置）
+        rag_config = {
+            **doc_manager_config,
+            "enable_document_name_matching": vector_config.get("enable_document_name_matching", True),
+            "document_name_match_threshold": vector_config.get("document_name_match_threshold", 0.3)
+        }
+        
+        # 初始化 RAG 引擎（使用DocumentManager和配置）
         self.rag_engine = RAGEngine(
             vector_db=self.vector_db,
-            document_manager=self.document_manager
+            document_manager=self.document_manager,
+            config=rag_config
         )
         
+        # 初始化技能索引器（如果启用）
+        skill_config = self.config.get("skills", {})
+        skill_indexer = None
+        if skill_config.get("index_to_vector_db", True):
+            try:
+                skill_collection_name = skill_config.get("skill_collection_name", "bitwiseai_skills")
+                skill_indexer = SkillIndexer(
+                    vector_db=self.vector_db,
+                    collection_name=skill_collection_name,
+                    embedding_dim=embedding_dim
+                )
+            except Exception as e:
+                print(f"⚠️  初始化技能索引器失败: {e}")
+        
         # 初始化 Skill 管理器
-        self.skill_manager = SkillManager()
+        self.skill_manager = SkillManager(
+            builtin_skills_dir=None,  # 使用默认路径
+            skill_indexer=skill_indexer
+        )
+        
+        # 添加外部技能目录
+        external_dirs = skill_config.get("external_directories", [])
+        if not external_dirs:
+            # 默认外部技能目录
+            external_dirs = ["~/.bitwiseai/skills"]
+        
+        for ext_dir in external_dirs:
+            self.skill_manager.add_skills_directory(ext_dir)
+        
+        # 扫描所有技能
         self.skill_manager.scan_skills()
         
-        # 自动加载内置 skills
-        builtin_skills = ["hex_converter", "asm_parser"]
-        for skill_name in builtin_skills:
+        # 自动加载指定的 skills
+        auto_load_skills = skill_config.get("auto_load", ["asm-parser", "hex-converter", "error-analyzer"])
+        for skill_name in auto_load_skills:
             if skill_name in self.skill_manager.list_available_skills():
                 self.skill_manager.load_skill(skill_name)
         
@@ -297,6 +358,31 @@ class BitwiseAI:
             return self.skill_manager.list_loaded_skills()
         else:
             return self.skill_manager.list_available_skills()
+    
+    def search_skills(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """
+        搜索相关技能（使用向量检索）
+        
+        Args:
+            query: 查询文本
+            top_k: 返回结果数量
+            
+        Returns:
+            技能信息列表
+        """
+        return self.skill_manager.search_skills(query, top_k)
+    
+    def add_skills_directory(self, path: str) -> bool:
+        """
+        添加外部技能目录
+        
+        Args:
+            path: 技能目录路径
+            
+        Returns:
+            是否添加成功
+        """
+        return self.skill_manager.add_skills_directory(path)
     
     # ========== 向后兼容的工具管理 API ==========
     

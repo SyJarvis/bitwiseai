@@ -8,6 +8,8 @@ from .skill_manager import SkillManager, Skill
 from .rag_engine import RAGEngine
 from .chat_engine import ChatEngine
 from .document_manager import DocumentManager
+from .skill_indexer import SkillIndexer
+from .document_matcher import DocumentNameMatcher
 
-__all__ = ["SkillManager", "Skill", "RAGEngine", "ChatEngine", "DocumentManager"]
+__all__ = ["SkillManager", "Skill", "RAGEngine", "ChatEngine", "DocumentManager", "SkillIndexer", "DocumentNameMatcher"]
 

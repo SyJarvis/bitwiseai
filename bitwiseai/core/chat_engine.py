@@ -315,9 +315,20 @@ class ChatEngine:
         # 如果有 RAG，检索相关文档
         context = ""
         if use_rag and self.rag_engine:
-            context_docs = self.rag_engine.search(query, top_k=5)
-            if context_docs:
-                context = f"\n\n相关文档上下文:\n{context_docs}\n"
+            # 使用 search_with_metadata 获取更详细的检索结果
+            results = self.rag_engine.search_with_metadata(query, top_k=5, use_hybrid=True)
+            if results:
+                # 格式化检索结果，包含文档来源信息
+                context_parts = []
+                for i, result in enumerate(results, 1):
+                    source_file = result.get('source_file', '未知')
+                    text = result.get('text', '')
+                    score = result.get('score', 0.0)
+                    import os
+                    filename = os.path.basename(source_file)
+                    context_parts.append(f"[文档 {i}: {filename}]\n{text}")
+                context = "\n\n---\n\n".join(context_parts)
+                context = f"\n\n重要：请优先使用以下检索到的文档内容回答问题。如果文档中有相关信息，必须基于文档内容回答，不要说自己不知道。\n\n检索到的文档内容:\n{context}\n"
         
         system_prompt_text = base_prompt + context if context else base_prompt
 
@@ -504,9 +515,20 @@ class ChatEngine:
         # 如果有 RAG，检索相关文档
         context = ""
         if use_rag and self.rag_engine:
-            context_docs = self.rag_engine.search(query, top_k=5)
-            if context_docs:
-                context = f"\n\n相关文档上下文:\n{context_docs}\n"
+            # 使用 search_with_metadata 获取更详细的检索结果
+            results = self.rag_engine.search_with_metadata(query, top_k=5, use_hybrid=True)
+            if results:
+                # 格式化检索结果，包含文档来源信息
+                context_parts = []
+                for i, result in enumerate(results, 1):
+                    source_file = result.get('source_file', '未知')
+                    text = result.get('text', '')
+                    score = result.get('score', 0.0)
+                    import os
+                    filename = os.path.basename(source_file)
+                    context_parts.append(f"[文档 {i}: {filename}]\n{text}")
+                context = "\n\n---\n\n".join(context_parts)
+                context = f"\n\n重要：请优先使用以下检索到的文档内容回答问题。如果文档中有相关信息，必须基于文档内容回答，不要说自己不知道。\n\n检索到的文档内容:\n{context}\n"
         
         system_prompt_text = base_prompt + context if context else base_prompt
 
