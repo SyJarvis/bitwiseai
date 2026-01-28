@@ -175,11 +175,14 @@ def tool_mode(args):
                 sys.exit(1)
         
         elif args.list_tools:
-            # 列出所有工具
-            tools = ai.list_tools()
-            print(f"可用工具 ({len(tools)} 个，来自已加载的 Skills):")
-            for i, tool_name in enumerate(tools, 1):
-                print(f"  {i}. {tool_name}")
+            # 按 Skill 分组显示工具数量（不列出单个工具）
+            skills = ai.list_skills(loaded_only=args.loaded_only)
+            print(f"Skills ({len(skills)} 个):")
+            for i, skill_name in enumerate(skills, 1):
+                skill = ai.skill_manager.get_skill(skill_name)
+                n_tools = len(skill.tools) if skill and skill.tools else 0
+                status = "✅ 已加载" if skill and skill.loaded else "⏸️ 未加载"
+                print(f"  {i}. {skill_name} ({status}) - {n_tools} 工具 - {skill.description or '无描述'}")
         
         elif args.invoke:
             # 调用工具

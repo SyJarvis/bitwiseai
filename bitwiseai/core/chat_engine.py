@@ -94,10 +94,7 @@ class ChatEngine:
         if use_tools and self.skill_manager:
             loaded_skills = self.skill_manager.list_loaded_skills()
             if len(loaded_skills) > 0:
-                print(f"🔧 检测到 {len(loaded_skills)} 个已加载的 skills，尝试使用工具调用")
                 return self._chat_with_tools(query, use_rag=use_rag, history=history)
-            else:
-                print("⚠️  没有已加载的 skills，跳过工具调用")
         
         if use_rag and self.rag_engine:
             return self._chat_with_rag(query, history=history)
@@ -336,11 +333,6 @@ class ChatEngine:
         try:
             # 使用 bind_tools 绑定工具到模型（原生 Function Calling）
             if hasattr(self.llm.client, 'bind_tools'):
-                print(f"🔧 使用原生 Function Calling，模型: {type(self.llm.client).__name__}")
-                print(f"🔧 可用工具 ({len(langchain_tools)} 个):")
-                for tool in langchain_tools:
-                    print(f"   - {tool.name}: {tool.description[:50]}...")
-                
                 # 绑定工具到模型
                 model_with_tools = self.llm.client.bind_tools(langchain_tools)
                 
@@ -365,8 +357,6 @@ class ChatEngine:
                 
                 # 检查是否有工具调用
                 if hasattr(response, 'tool_calls') and response.tool_calls:
-                    print(f"🔧 检测到 {len(response.tool_calls)} 个工具调用")
-                    
                     # 执行工具调用
                     tool_messages = []
                     for tool_call in response.tool_calls:
@@ -391,7 +381,6 @@ class ChatEngine:
                                         tool_call_id=tool_id
                                     )
                                 )
-                                print(f"   ✓ {tool_name}({tool_args}) = {tool_result}")
                             except Exception as e:
                                 tool_messages.append(
                                     ToolMessage(
@@ -399,7 +388,7 @@ class ChatEngine:
                                         tool_call_id=tool_id
                                     )
                                 )
-                                print(f"   ❌ {tool_name} 执行失败: {e}")
+                                print(f"❌ 工具 {tool_name} 执行失败: {e}")
                         else:
                             tool_messages.append(
                                 ToolMessage(
@@ -424,11 +413,7 @@ class ChatEngine:
                 
         except (AttributeError, Exception) as e:
             # Fallback: 使用 Agent 模式
-            print(f"⚠️  直接 Function Calling 不可用: {str(e)}")
-            print(f"🔧 使用 Agent 模式，模型: {type(self.llm.client).__name__}")
-            print(f"🔧 可用工具 ({len(langchain_tools)} 个):")
-            for tool in langchain_tools:
-                print(f"   - {tool.name}: {tool.description[:50]}...")
+            print(f"⚠️  直接 Function Calling 不可用，使用 Agent 模式: {str(e)}")
             
             try:
                 # 使用 create_agent API（LangChain 1.1.0+）
@@ -536,11 +521,6 @@ class ChatEngine:
         try:
             # 使用 bind_tools 绑定工具到模型（原生 Function Calling）
             if hasattr(self.llm.client, 'bind_tools'):
-                print(f"🔧 使用原生 Function Calling（流式），模型: {type(self.llm.client).__name__}")
-                print(f"🔧 可用工具 ({len(langchain_tools)} 个):")
-                for tool in langchain_tools:
-                    print(f"   - {tool.name}: {tool.description[:50]}...")
-                
                 # 绑定工具到模型
                 model_with_tools = self.llm.client.bind_tools(langchain_tools)
                 
@@ -565,8 +545,6 @@ class ChatEngine:
                 
                 # 检查是否有工具调用
                 if hasattr(response, 'tool_calls') and response.tool_calls:
-                    print(f"🔧 检测到 {len(response.tool_calls)} 个工具调用")
-                    
                     # 执行工具调用
                     tool_messages = []
                     for tool_call in response.tool_calls:
@@ -591,7 +569,6 @@ class ChatEngine:
                                         tool_call_id=tool_id
                                     )
                                 )
-                                print(f"   ✓ {tool_name}({tool_args}) = {tool_result}")
                             except Exception as e:
                                 tool_messages.append(
                                     ToolMessage(
@@ -599,7 +576,7 @@ class ChatEngine:
                                         tool_call_id=tool_id
                                     )
                                 )
-                                print(f"   ❌ {tool_name} 执行失败: {e}")
+                                print(f"❌ 工具 {tool_name} 执行失败: {e}")
                         else:
                             tool_messages.append(
                                 ToolMessage(
@@ -613,7 +590,6 @@ class ChatEngine:
                     messages.extend(tool_messages)
                     
                     # 流式获取最终回答
-                    print(f"🔧 流式获取最终回答...")
                     for chunk in model_with_tools.stream(messages):
                         if hasattr(chunk, 'content') and chunk.content:
                             yield chunk.content
@@ -633,8 +609,7 @@ class ChatEngine:
         except (AttributeError, Exception) as e:
             # Fallback: 使用 Agent 模式
             # 注意：LangChain Agent 的流式输出比较复杂，这里先获取完整回答，然后流式输出
-            print(f"⚠️  直接 Function Calling 不可用: {str(e)}")
-            print(f"🔧 使用 Agent 模式，模型: {type(self.llm.client).__name__}")
+            print(f"⚠️  直接 Function Calling 不可用，使用 Agent 模式: {str(e)}")
             
             try:
                 # 使用 create_agent API

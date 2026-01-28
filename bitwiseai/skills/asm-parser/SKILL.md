@@ -1,79 +1,136 @@
 ---
 name: asm-parser
-description: 解析64位 ASM 指令和文件，支持多种指令格式。使用场景：当需要解析硬件指令、分析 ASM 文件或验证指令正确性时。
+description: "Parse 64-bit ASM instructions and files; analyze output errors with generated plots. Use cases: parse hardware instructions, verify instruction correctness, compare output files for numerical errors."
 license: MIT
 metadata:
   author: BitwiseAI
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
-# ASM 指令解析器
+# ASM Parser & Error Analyzer
 
-## 功能概述
+## Features
 
-本技能提供 ASM 指令解析功能，支持：
-- 解析单条64位 ASM 指令
-- 解析 ASM 文件中的所有指令
-- 支持多种指令格式（MOV, ADD, SUB, MUL, LUT2/3/4, SHIFT, CLAMP, ABS 等）
+This skill provides:
+- Parse single 64-bit ASM instructions
+- Parse all instructions from ASM files
+- Support for multiple instruction formats (MOV, ADD, SUB, MUL, LUT2/3/4, SHIFT, CLAMP, ABS, etc.)
+- Analyze errors between two numeric output files and generate plots
 
-## 工具说明
+## Tools
 
 ### parse_asm_instruction
 
-解析一条64位 ASM 指令。输入为指令的十六进制、二进制或十进制值，输出为指令的详细解析信息，包括指令名称、操作码、各字段的值和含义。
+Parse a single 64-bit ASM instruction.
 
-**参数**:
-- `cmd` (string): 64位指令值，可以是整数、十六进制（0x...）或二进制（0b...）格式
+**Parameters**:
+- `cmd` (string): 64-bit instruction value as integer, hex (0x...), or binary (0b...) format
 
-**示例**:
+**Example**:
 ```python
 parse_asm_instruction("0x1234567890abcdef")
 ```
 
-**返回格式**:
-返回 JSON 字符串，包含：
-- 指令名称
-- 操作码
-- 各字段的值和含义
-- 寄存器信息
+**Returns**:
+JSON string containing:
+- instruction name
+- opcode (decimal, hex, binary)
+- field details and register names
 
 ### parse_asm_file
 
-解析 ASM 文件中的所有指令。输入为 ASM 文件路径，输出为文件中所有指令的详细解析信息。ASM 文件格式为每行包含一条或多条指令的十六进制表示（每条指令16个字符）。
+Parse all instructions from an ASM file. File format: each line contains one or more instructions as hex (16 chars per instruction).
 
-**参数**:
-- `file_path` (string): ASM 文件的路径（绝对路径或相对路径）
+**Parameters**:
+- `file_path` (string): path to ASM file
 
-**示例**:
+**Example**:
 ```python
 parse_asm_file("/path/to/instructions.asm")
 ```
 
-**返回格式**:
-返回 JSON 字符串，包含：
-- 文件路径
-- 指令数量
-- 所有指令的详细解析信息列表
+**Returns**:
+JSON string with file path, instruction count, and detailed parsing of each instruction.
 
-## 使用场景
+### analyze_errors
 
-- 硬件调试和指令验证
-- ASM 文件分析和处理
-- 指令格式转换和解析
-- 指令正确性验证
+Compare two numeric output files and generate error analysis plots.
 
-## 支持的指令类型
+Reads numeric values from both files in order, computes absolute and relative errors, generates three PNG plots (absolute error, relative error, error distribution), saves detailed JSON results, and returns a concise summary.
 
-- MOV: 数据移动指令
-- ADD/SUB/MUL: 算术运算指令
-- LUT2/LUT3/LUT4: 查找表指令
-- SHIFT: 移位指令
-- CLAMP: 限幅指令
-- ABS: 绝对值指令
+**Parameters**:
+- `file_a` (string): path to first file (e.g., model output)
+- `file_b` (string): path to second file (e.g., reference/expected output)
+- `outputs_dir` (string, optional): directory to save plots and JSON; defaults to 'outputs'
 
-## 注意事项
+**Example**:
+```python
+analyze_errors("model_output.txt", "reference_output.txt", "outputs")
+```
 
-- 指令值必须是64位整数
-- 支持十六进制（0x...）、二进制（0b...）和十进制格式
-- ASM 文件每行应包含完整的指令十六进制表示
+**Returns**:
+Concise summary string containing:
+- number of compared samples
+- absolute error mean and max
+- relative error mean and max
+- path to detailed JSON results
+
+**Output files**:
+- `absolute_error.png` — line plot of absolute error vs sample index
+- `relative_error.png` — line plot of relative error vs sample index
+- `error_distribution.png` — histogram of absolute error distribution
+- `error_analysis_{timestamp}.json` — detailed error statistics in JSON format
+
+### analyze_errors_in_directory
+
+Compare all files in a directory pairwise and generate error analysis for each pair.
+
+Scans a directory for all text files (.txt, .dat), performs pairwise comparison between all files, saves results for each pair in separate subdirectories, and returns a batch summary.
+
+**Parameters**:
+- `directory_path` (string): path to directory containing files to compare
+- `outputs_dir` (string, optional): base directory to write results into; defaults to 'outputs'
+
+**Example**:
+```python
+analyze_errors_in_directory("./input_output_data", "outputs")
+```
+
+**Returns**:
+Summary string containing:
+- number of files found
+- number of comparisons performed
+- success/failure counts
+- list of all comparison results with output directories
+
+**Output structure**:
+For each file pair (file_a vs file_b), creates a subdirectory:
+- `{outputs_dir}/{file_a_name}_vs_{file_b_name}/` — contains plots and JSON for that pair
+
+## Use Cases
+
+- Parse and validate hardware instructions
+- Analyze ASM files and convert formats
+- Compare numerical outputs from model vs reference implementations
+- Batch compare multiple output files in a directory
+- Debug hardware verification errors
+- Verify instruction correctness
+
+## Supported Instruction Types
+
+- MOV: Data movement
+- ADD/SUB/MUL: Arithmetic operations
+- LUT2/LUT3/LUT4: Lookup table operations
+- SHIFT: Bit shifting
+- CLAMP: Value clamping
+- ABS: Absolute value
+
+## Notes
+
+- Instruction values must be 64-bit integers
+- Error analysis requires numeric data in input files; non-numeric tokens are ignored
+- Generated plots are saved as PNG files to the specified outputs directory
+- Detailed error statistics are saved as JSON files (not printed to console)
+- Directory comparison performs pairwise analysis of all text files found
+- Requires numpy and matplotlib for error analysis functionality
 
