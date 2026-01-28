@@ -1,8 +1,24 @@
 import logging
 import re
 from typing import List, Tuple, Optional, Callable, Dict, Any
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Optional imports for analysis plotting
+_np = None
+_plt = None
+try:
+    import numpy as _np
+except Exception:
+    pass
+
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as _plt
+except Exception:
+    pass
 
 
 def extract_bits(value: int, high_bit: int, low_bit: int) -> int:
@@ -654,10 +670,7 @@ def parse_asm_file_to_bytes(
         return False, []
     
     if not lines:
-        logger.warning("ASM file is empty")
         return False, []
-    
-    logger.debug(f"ASM file: {len(lines)} lines")
     
     all_instructions = []  # List[List[int]]，每个指令是8个字节
     original_hex_strings = []  # List[str]，保存原始十六进制字符串
@@ -683,18 +696,11 @@ def parse_asm_file_to_bytes(
                 try:
                     byte_val = int(byte_str, 16)
                     instr_bytes.append(byte_val)
-                except ValueError as e:
-                    logger.warning(f"Failed to parse ASM byte: {byte_str} ({e})")
+                except ValueError:
                     instr_bytes.append(0)
             
             all_instructions.append(instr_bytes)
             original_hex_strings.append(instr_hex)
-    
-    logger.debug(f"Found {len(all_instructions)} valid instructions")
-    
-    logger.info("==================== ASM 指令解析 (执行顺序) ====================")
-    logger.info(f"文件: {file_path}")
-    logger.info(f"总指令数: {len(all_instructions)}")
     
     # 构建最终的字节数组
     bytes_result = []
@@ -713,14 +719,9 @@ def parse_asm_file_to_bytes(
         if print_instruction_info:
             print_instruction_info(cmd, i, original_hex_strings[i])
     
-    logger.info("================================================================")
-    
     # 如果指定了期望长度且结果超过期望长度，进行截断
     if expected_len > 0 and len(bytes_result) > expected_len:
-        logger.debug(f"Truncating output from {len(bytes_result)} to {expected_len} bytes")
         bytes_result = bytes_result[:expected_len]
-    
-    logger.info(f"Loaded {len(bytes_result)} bytes ({len(bytes_result) // 8} instructions) from ASM file: {file_path}")
     
     success = len(bytes_result) > 0
     return success, bytes_result
@@ -748,7 +749,6 @@ def parse_asm_file_to_instructions(file_path: str) -> List[Dict[str, Any]]:
         return []
     
     if not lines:
-        logger.warning("ASM file is empty")
         return []
     
     instructions = []
@@ -832,7 +832,7 @@ def parse_asm_instruction(cmd: str) -> str:
             cmd_int = int(cmd_str)
     except ValueError:
         return json.dumps({
-            "error": f"无法解析指令值: {cmd_str}。请提供整数、十六进制（0x...）或二进制（0b...）格式。"
+            "error": f"Failed to parse instruction value: {cmd_str}. Provide integer, hex (0x...) or binary (0b...) format."
         }, ensure_ascii=False, indent=2)
     
     # 解析指令
@@ -841,7 +841,7 @@ def parse_asm_instruction(cmd: str) -> str:
         return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
         return json.dumps({
-            "error": f"解析指令时出错: {str(e)}"
+            "error": f"Error parsing instruction: {str(e)}"
         }, ensure_ascii=False, indent=2)
 
 
@@ -875,5 +875,252 @@ def parse_asm_file(file_path: str) -> str:
         }, ensure_ascii=False, indent=2)
     except Exception as e:
         return json.dumps({
-            "error": f"解析文件时出错: {str(e)}"
+            "error": f"Error parsing file: {str(e)}"
         }, ensure_ascii=False, indent=2)
+
+
+# ------------------------- Error analysis tools -------------------------
+
+def _parse_numeric_file(path: str) -> List[float]:
+    """
+    Parse a text file and extract numeric values (floats) in order.
+    Lines may contain one or more numbers; non-numeric tokens are ignored.
+    """
+    nums: List[float] = []
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+
+    with p.open('r', encoding='utf-8', errors='ignore') as f:
+        for line in f:
+            # find floats and ints (including scientific notation)
+            for token in re.findall(r'[+-]?\d+\.\d+(?:[eE][+-]?\d+)?|[+-]?\d+(?:[eE][+-]?\d+)?', line):
+                try:
+                    nums.append(float(token))
+                except Exception:
+                    continue
+
+    return nums
+
+
+def analyze_errors(file_a: str, file_b: str, outputs_dir: str = 'outputs') -> str:
+    """
+    Analyze errors between two numeric output files.
+
+    - Reads numeric sequences from both files (order-preserving).
+    - Computes absolute and relative error (relative = abs(a-b)/(abs(b)+eps)).
+    - Saves three plots and JSON results into `outputs_dir`.
+    - Returns a concise summary string.
+
+    Args:
+        file_a: path to first file (e.g. model output)
+        file_b: path to second file (e.g. reference/expected output)
+        outputs_dir: directory to write plot files and JSON into
+
+    Returns:
+        summary (str) — Concise summary with main error statistics.
+    """
+    import json
+    from datetime import datetime
+    
+    # check plotting libs
+    if _np is None or _plt is None:
+        return "Error: numpy and matplotlib are required for analyze_errors. Please install them."
+
+    out_dir = Path(outputs_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # parse files
+    try:
+        a_vals = _parse_numeric_file(file_a)
+    except Exception as e:
+        return f"Error reading {file_a}: {e}"
+
+    try:
+        b_vals = _parse_numeric_file(file_b)
+    except Exception as e:
+        return f"Error reading {file_b}: {e}"
+
+    n = min(len(a_vals), len(b_vals))
+    if n == 0:
+        return "No numeric data found in input files."
+
+    a = _np.array(a_vals[:n], dtype=float)
+    b = _np.array(b_vals[:n], dtype=float)
+
+    abs_err = _np.abs(a - b)
+    eps = 1e-12
+    rel_err = abs_err / (_np.abs(b) + eps)
+
+    # Calculate statistics
+    mean_abs_err = float(_np.mean(abs_err))
+    max_abs_err = float(_np.max(abs_err))
+    mean_rel_err = float(_np.mean(rel_err))
+    max_rel_err = float(_np.max(rel_err))
+    std_abs_err = float(_np.std(abs_err))
+    std_rel_err = float(_np.std(rel_err))
+
+    # Plot absolute error
+    abs_path = out_dir / 'absolute_error.png'
+    fig = _plt.figure(figsize=(8, 4))
+    _plt.plot(abs_err, label='Absolute Error')
+    _plt.xlabel('Sample Index')
+    _plt.ylabel('Absolute Error')
+    _plt.title('Absolute Error vs Sample Index')
+    _plt.grid(True)
+    _plt.tight_layout()
+    fig.savefig(str(abs_path))
+    _plt.close(fig)
+
+    # Plot relative error
+    rel_path = out_dir / 'relative_error.png'
+    fig = _plt.figure(figsize=(8, 4))
+    _plt.plot(rel_err, label='Relative Error')
+    _plt.xlabel('Sample Index')
+    _plt.ylabel('Relative Error')
+    _plt.title('Relative Error vs Sample Index')
+    _plt.grid(True)
+    _plt.tight_layout()
+    fig.savefig(str(rel_path))
+    _plt.close(fig)
+
+    # Plot distribution (histogram)
+    dist_path = out_dir / 'error_distribution.png'
+    fig = _plt.figure(figsize=(6, 4))
+    _plt.hist(abs_err, bins=50)
+    _plt.xlabel('Absolute Error')
+    _plt.ylabel('Count')
+    _plt.title('Absolute Error Distribution')
+    _plt.tight_layout()
+    fig.savefig(str(dist_path))
+    _plt.close(fig)
+
+    # Prepare detailed JSON results
+    json_result = {
+        "file_a": file_a,
+        "file_b": file_b,
+        "compared_samples": n,
+        "absolute_error": {
+            "mean": mean_abs_err,
+            "max": max_abs_err,
+            "std": std_abs_err
+        },
+        "relative_error": {
+            "mean": mean_rel_err,
+            "max": max_rel_err,
+            "std": std_rel_err
+        },
+        "generated_plots": [
+            str(abs_path),
+            str(rel_path),
+            str(dist_path)
+        ],
+        "timestamp": datetime.now().isoformat()
+    }
+
+    # Save JSON to file
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    json_path = out_dir / f'error_analysis_{timestamp}.json'
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(json_result, f, indent=2, ensure_ascii=False)
+
+    # Return concise summary
+    summary = f"误差分析完成: 比较了 {n} 个样本\n"
+    summary += f"绝对误差: 平均={mean_abs_err:.6g}, 最大={max_abs_err:.6g}\n"
+    summary += f"相对误差: 平均={mean_rel_err:.6g}, 最大={max_rel_err:.6g}\n"
+    summary += f"详细结果已保存到: {json_path}"
+
+    return summary
+
+
+def analyze_errors_in_directory(directory_path: str, outputs_dir: str = 'outputs') -> str:
+    """
+    Analyze errors between all files in a directory (pairwise comparison).
+
+    - Scans directory for all text files.
+    - Performs pairwise comparison between all files.
+    - Saves results for each pair in separate subdirectories.
+    - Returns a summary of all comparisons.
+
+    Args:
+        directory_path: path to directory containing files to compare
+        outputs_dir: base directory to write results into
+
+    Returns:
+        summary (str) — Summary of batch comparison results.
+    """
+    from itertools import combinations
+    import os
+    
+    # check plotting libs
+    if _np is None or _plt is None:
+        return "Error: numpy and matplotlib are required for analyze_errors_in_directory. Please install them."
+
+    dir_path = Path(directory_path)
+    if not dir_path.exists() or not dir_path.is_dir():
+        return f"Error: Directory not found: {directory_path}"
+
+    # Find all text files in directory
+    txt_files = sorted([f for f in dir_path.iterdir() 
+                       if f.is_file() and f.suffix.lower() in ['.txt', '.dat']])
+    
+    if len(txt_files) < 2:
+        return f"Error: Need at least 2 files in directory, found {len(txt_files)}"
+
+    # Create base output directory
+    base_out_dir = Path(outputs_dir)
+    base_out_dir.mkdir(parents=True, exist_ok=True)
+
+    results = []
+    successful = 0
+    failed = 0
+
+    # Perform pairwise comparisons
+    for file_a, file_b in combinations(txt_files, 2):
+        file_a_name = file_a.stem
+        file_b_name = file_b.stem
+        
+        # Create subdirectory for this pair
+        pair_dir = base_out_dir / f"{file_a_name}_vs_{file_b_name}"
+        pair_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # Use analyze_errors for this pair
+            result_summary = analyze_errors(str(file_a), str(file_b), str(pair_dir))
+            
+            # Extract key metrics from summary (parse the summary string)
+            # Since analyze_errors returns a summary, we'll store it
+            results.append({
+                "file_a": file_a_name,
+                "file_b": file_b_name,
+                "output_dir": str(pair_dir),
+                "summary": result_summary,
+                "status": "success"
+            })
+            successful += 1
+        except Exception as e:
+            results.append({
+                "file_a": file_a_name,
+                "file_b": file_b_name,
+                "status": "failed",
+                "error": str(e)
+            })
+            failed += 1
+
+    # Generate summary
+    summary_lines = []
+    summary_lines.append(f"目录批量比对完成: {directory_path}")
+    summary_lines.append(f"找到文件数: {len(txt_files)}")
+    summary_lines.append(f"比对对数: {len(results)}")
+    summary_lines.append(f"成功: {successful}, 失败: {failed}")
+    summary_lines.append("")
+    summary_lines.append("比对结果:")
+    
+    for result in results:
+        if result["status"] == "success":
+            summary_lines.append(f"  ✓ {result['file_a']} vs {result['file_b']}: {result['output_dir']}")
+        else:
+            summary_lines.append(f"  ✗ {result['file_a']} vs {result['file_b']}: {result.get('error', 'Unknown error')}")
+
+    summary = "\n".join(summary_lines)
+    return summary

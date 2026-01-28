@@ -20,7 +20,7 @@ class Embedding:
         model: str = "text-embedding-3-small",
         api_key: str = None,
         base_url: str = None,
-        show_progress_bar: bool = True
+        show_progress_bar: bool = False
     ):
         """
         初始化 Embedding 模型
@@ -29,7 +29,7 @@ class Embedding:
             model: 模型名称
             api_key: API 密钥
             base_url: API 基础地址
-            show_progress_bar: 是否显示进度条
+            show_progress_bar: 是否显示进度条（默认 False，不显示）
         """
         self.model = model
 

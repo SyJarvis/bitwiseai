@@ -12,6 +12,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 from typing import List, Tuple, Dict, Any
+import warnings
+
+warnings.filterwarnings("ignore")
 
 
 def _read_float_file(filepath: str) -> List[float]:
@@ -53,8 +56,6 @@ def _calculate_errors(file1_path: str, file2_path: str) -> Tuple[List[float], Li
     
     # 确保两个文件的行数相同
     min_len = min(len(values1), len(values2))
-    if len(values1) != len(values2):
-        print(f"⚠️  文件行数不同 ({len(values1)} vs {len(values2)})，仅比较前 {min_len} 行")
     
     values1 = values1[:min_len]
     values2 = values2[:min_len]
@@ -100,9 +101,9 @@ def plot_absolute_error(file1_path: str, file2_path: str, output_path: str = Non
     # 创建独立图表
     plt.figure(figsize=(12, 6))
     plt.plot(line_numbers, absolute_errors, 'b-', linewidth=0.8, alpha=0.7)
-    plt.xlabel('行号', fontsize=12)
-    plt.ylabel('绝对误差', fontsize=12)
-    plt.title('每行绝对误差 (|值1 - 值2|)', fontsize=14, fontweight='bold')
+    plt.xlabel('Line Number', fontsize=12)
+    plt.ylabel('Absolute Error', fontsize=12)
+    plt.title('Absolute Error per Line (|value1 - value2|)', fontsize=14, fontweight='bold')
     plt.grid(True, alpha=0.3)
     
     # 添加统计信息
@@ -110,14 +111,14 @@ def plot_absolute_error(file1_path: str, file2_path: str, output_path: str = Non
     std_abs_err = np.std(absolute_errors)
     
     plt.axhline(y=mean_abs_err, color='r', linestyle='--', linewidth=1, 
-                label=f'平均误差: {mean_abs_err:.6f}')
+                label=f'Mean Error: {mean_abs_err:.6f}')
     plt.axhline(y=mean_abs_err + std_abs_err, color='orange', linestyle=':', linewidth=1,
-                label=f'平均值+标准差: {mean_abs_err + std_abs_err:.6f}')
+                label=f'Mean+Std: {mean_abs_err + std_abs_err:.6f}')
     plt.axhline(y=mean_abs_err - std_abs_err, color='orange', linestyle=':', linewidth=1,
-                label=f'平均值-标准差: {mean_abs_err - std_abs_err:.6f}')
+                label=f'Mean-Std: {mean_abs_err - std_abs_err:.6f}')
     plt.legend()
     
-    plt.tight_layout()
+    # plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
     
@@ -150,9 +151,9 @@ def plot_relative_error(file1_path: str, file2_path: str, output_path: str = Non
     # 创建独立图表
     plt.figure(figsize=(12, 6))
     plt.plot(line_numbers, relative_errors, 'r-', linewidth=0.8, alpha=0.7)
-    plt.xlabel('行号', fontsize=12)
-    plt.ylabel('相对误差 (%)', fontsize=12)
-    plt.title('每行相对误差 (|值1 - 值2| / |值1| × 100%)', fontsize=14, fontweight='bold')
+    plt.xlabel('Line Number', fontsize=12)
+    plt.ylabel('Relative Error (%)', fontsize=12)
+    plt.title('Relative Error per Line (|value1 - value2| / |value1| × 100%)', fontsize=14, fontweight='bold')
     plt.grid(True, alpha=0.3)
     
     # 添加统计信息
@@ -160,11 +161,11 @@ def plot_relative_error(file1_path: str, file2_path: str, output_path: str = Non
     std_rel_err = np.std(relative_errors)
     
     plt.axhline(y=mean_rel_err, color='b', linestyle='--', linewidth=1,
-                label=f'平均相对误差: {mean_rel_err:.4f}%')
+                label=f'Mean Relative Error: {mean_rel_err:.4f}%')
     plt.axhline(y=mean_rel_err + std_rel_err, color='orange', linestyle=':', linewidth=1,
-                label=f'平均值+标准差: {mean_rel_err + std_rel_err:.4f}%')
+                label=f'Mean+Std: {mean_rel_err + std_rel_err:.4f}%')
     plt.axhline(y=mean_rel_err - std_rel_err, color='orange', linestyle=':', linewidth=1,
-                label=f'平均值-标准差: {mean_rel_err - std_rel_err:.4f}%')
+                label=f'Mean-Std: {mean_rel_err - std_rel_err:.4f}%')
     plt.legend()
     
     plt.tight_layout()
@@ -200,16 +201,16 @@ def plot_error_distribution(file1_path: str, file2_path: str, output_path: str =
     
     # 绝对误差分布
     ax1.hist(absolute_errors, bins=50, color='blue', alpha=0.7, edgecolor='black')
-    ax1.set_xlabel('绝对误差', fontsize=12)
-    ax1.set_ylabel('频数', fontsize=12)
-    ax1.set_title('绝对误差分布直方图', fontsize=14, fontweight='bold')
+    ax1.set_xlabel('Absolute Error', fontsize=12)
+    ax1.set_ylabel('Frequency', fontsize=12)
+    ax1.set_title('Absolute Error Distribution', fontsize=14, fontweight='bold')
     ax1.grid(True, alpha=0.3)
     
     # 相对误差分布
     ax2.hist(relative_errors, bins=50, color='red', alpha=0.7, edgecolor='black')
-    ax2.set_xlabel('相对误差 (%)', fontsize=12)
-    ax2.set_ylabel('频数', fontsize=12)
-    ax2.set_title('相对误差分布直方图', fontsize=14, fontweight='bold')
+    ax2.set_xlabel('Relative Error (%)', fontsize=12)
+    ax2.set_ylabel('Frequency', fontsize=12)
+    ax2.set_title('Relative Error Distribution', fontsize=14, fontweight='bold')
     ax2.grid(True, alpha=0.3)
     
     plt.tight_layout()
@@ -226,11 +227,13 @@ def analyze_errors(file1_path: str, file2_path: str, output_dir: str = None) -> 
     Args:
         file1_path: 第一个数据文件路径（参考文件）
         file2_path: 第二个数据文件路径（对比文件）
-        output_dir: 输出目录，用于保存生成的图表（可选，默认为当前目录）
+        output_dir: 输出目录，用于保存生成的图表和JSON（可选，默认为当前目录）
         
     Returns:
-        JSON 字符串，包含统计信息和生成的图表文件路径
+        简洁的中文摘要，包含主要误差统计和JSON文件路径
     """
+    from datetime import datetime
+    
     if not output_dir:
         output_dir = '.'
     
@@ -275,8 +278,10 @@ def analyze_errors(file1_path: str, file2_path: str, output_dir: str = None) -> 
             "value2": values2[idx]
         })
     
-    # 构建结果
+    # 构建详细结果
     result = {
+        "file1_path": file1_path,
+        "file2_path": file2_path,
         "total_lines": len(absolute_errors),
         "absolute_error": {
             "max": float(max_abs_err),
@@ -297,7 +302,106 @@ def analyze_errors(file1_path: str, file2_path: str, output_dir: str = None) -> 
             rel_error_path,
             dist_path
         ],
-        "top_10_errors": top_10_errors
+        "top_10_errors": top_10_errors,
+        "timestamp": datetime.now().isoformat()
     }
     
-    return json.dumps(result, ensure_ascii=False, indent=2)
+    # 保存 JSON 到文件
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    json_path = os.path.join(output_dir, f'error_analysis_{timestamp}.json')
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(result, f, indent=2, ensure_ascii=False)
+    
+    # 返回简洁的中文摘要
+    summary = f"误差分析完成: 比较了 {len(absolute_errors)} 行数据\n"
+    summary += f"绝对误差: 平均={mean_abs_err:.6g}, 最大={max_abs_err:.6g} (第{max_abs_line}行)\n"
+    summary += f"相对误差: 平均={mean_rel_err:.4f}%, 最大={max_rel_err:.4f}% (第{max_rel_line}行)\n"
+    summary += f"详细结果已保存到: {json_path}"
+    
+    return summary
+
+
+def analyze_errors_in_directory(directory_path: str, outputs_dir: str = 'outputs') -> str:
+    """
+    分析目录下所有文件的误差（两两比对）
+    
+    - 扫描目录下所有文本文件（.txt, .dat）
+    - 对文件进行两两组合比对
+    - 为每对文件生成独立的输出子目录
+    - 返回批量比对的汇总摘要
+    
+    Args:
+        directory_path: 包含要比较文件的目录路径
+        outputs_dir: 输出目录，用于保存结果（可选，默认为 'outputs'）
+        
+    Returns:
+        批量比对的汇总摘要
+    """
+    from itertools import combinations
+    
+    dir_path = Path(directory_path)
+    if not dir_path.exists() or not dir_path.is_dir():
+        return f"错误: 目录不存在: {directory_path}"
+    
+    # 查找目录下所有文本文件
+    txt_files = sorted([f for f in dir_path.iterdir() 
+                       if f.is_file() and f.suffix.lower() in ['.txt', '.dat']])
+    
+    if len(txt_files) < 2:
+        return f"错误: 目录中至少需要2个文件，找到 {len(txt_files)} 个文件"
+    
+    # 创建基础输出目录
+    base_out_dir = Path(outputs_dir)
+    base_out_dir.mkdir(parents=True, exist_ok=True)
+    
+    results = []
+    successful = 0
+    failed = 0
+    
+    # 对文件进行两两比对
+    for file_a, file_b in combinations(txt_files, 2):
+        file_a_name = file_a.stem
+        file_b_name = file_b.stem
+        
+        # 为每对文件创建独立的输出子目录
+        pair_dir = base_out_dir / f"{file_a_name}_vs_{file_b_name}"
+        pair_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            # 使用 analyze_errors 进行比对
+            result_summary = analyze_errors(str(file_a), str(file_b), str(pair_dir))
+            
+            results.append({
+                "file_a": file_a_name,
+                "file_b": file_b_name,
+                "output_dir": str(pair_dir),
+                "summary": result_summary,
+                "status": "success"
+            })
+            successful += 1
+        except Exception as e:
+            results.append({
+                "file_a": file_a_name,
+                "file_b": file_b_name,
+                "status": "failed",
+                "error": str(e)
+            })
+            failed += 1
+    
+    # 生成汇总摘要
+    summary_lines = []
+    summary_lines.append(f"目录批量比对完成: {directory_path}")
+    summary_lines.append(f"找到文件数: {len(txt_files)}")
+    summary_lines.append(f"比对对数: {len(results)}")
+    summary_lines.append(f"成功: {successful}, 失败: {failed}")
+    summary_lines.append("")
+    summary_lines.append("比对结果:")
+    
+    for result in results:
+        if result["status"] == "success":
+            summary_lines.append(f"  ✓ {result['file_a']} vs {result['file_b']}: {result['output_dir']}")
+        else:
+            summary_lines.append(f"  ✗ {result['file_a']} vs {result['file_b']}: {result.get('error', '未知错误')}")
+    
+    summary = "\n".join(summary_lines)
+    return summary
