@@ -3,22 +3,30 @@
 BitwiseAI - 硬件调试和日志分析的 AI 工具
 
 专注于硬件指令验证、日志解析和智能分析
-基于 LangChain，支持本地 Milvus 向量数据库
+支持 Agent 循环、多会话管理、Skill 系统等高级功能
 """
+
 import os
 import json
-from typing import List, Optional, Dict, Any, Union, Callable
+from typing import Any, Iterator, List, Optional, Dict
 from dotenv import load_dotenv
 
 # 加载环境变量
 load_dotenv()
 
-from typing import Iterator
 from .llm import LLM
 from .embedding import Embedding
-from .vector_database import MilvusDB
 from .utils import DocumentLoader, TextSplitter
-from .core import SkillManager, RAGEngine, ChatEngine, SkillIndexer
+from .core import (
+    SkillManager,
+    RAGEngine,
+    ChatEngine,
+    SkillIndexer,
+    LLMConfig,
+    LLMProvider,
+    AgentConfig,
+    LoopConfig,
+)
 from .core.document_manager import DocumentManager
 from .interfaces import TaskInterface, AnalysisResult
 
@@ -27,268 +35,397 @@ class BitwiseAI:
     """
     BitwiseAI 核心类
 
-    特性：
+    整合所有功能：
     - 硬件指令验证和调试日志分析
-    - 基于 LangChain 的 ChatOpenAI 和 OpenAIEmbeddings
-    - 本地 Milvus 向量数据库
-    - 支持 RAG 模式和纯 LLM 模式
-    - 自定义系统提示词和工具扩展
+    - Agent 循环（对话→执行→反馈）
+    - 多会话管理
+    - Skill 系统
+    - RAG 检索
+    - 记忆系统（双层次：短期/长期）
+
+    设计原则（第一性原理）：
+    1. 单一职责：每个初始化方法只负责一个组件
+    2. 依赖清晰：组件初始化顺序明确
+    3. 防御性编程：每个步骤都有错误处理
+    4. 优雅降级：增强功能失败时自动降级
     """
 
     def __init__(
         self,
-        config_path: str = "~/.bitwiseai/config.json"
+        config_path: str = "~/.bitwiseai/config.json",
+        use_enhanced: bool = True,
     ):
         """
         初始化 BitwiseAI
 
         Args:
             config_path: 配置文件路径
+            use_enhanced: 是否使用增强版引擎（支持 Agent、会话等）
         """
-        # 展开路径
         self.config_path = os.path.expanduser(config_path)
-        self.working_dir = os.path.dirname(self.config_path)
+        self.use_enhanced = use_enhanced
 
-        # 加载配置
+        # 加载配置（第一步：配置管理）
         self.config = self._load_config()
-        
-        # 加载默认配置文件（如果指定配置文件不同）
-        default_config_path = os.path.expanduser("~/.bitwiseai/config.json")
-        default_config = {}
-        if default_config_path != self.config_path and os.path.exists(default_config_path):
-            with open(default_config_path, 'r', encoding='utf-8') as f:
-                default_config = json.load(f)
 
-        # 获取 LLM API 配置（优先级：指定配置文件 > .env > 默认配置文件）
-        llm_config = self.config.get("llm", {})
-        default_llm_config = default_config.get("llm", {})
-        llm_api_key = (
-            llm_config.get("api_key") or 
-            os.getenv("LLM_API_KEY") or 
-            default_llm_config.get("api_key")
-        )
-        llm_base_url = (
-            llm_config.get("base_url") or 
-            os.getenv("LLM_BASE_URL") or 
-            default_llm_config.get("base_url")
-        )
+        # 验证配置（第二步：配置验证）
+        self._validate_config()
 
-        if not llm_api_key:
-            raise ValueError("请在配置文件或 .env 文件中设置 LLM API Key")
-        if not llm_base_url:
-            raise ValueError("请在配置文件或 .env 文件中设置 LLM Base URL")
+        # 初始化核心组件（第三步：组件初始化）
+        self._init_components()
 
-        # 获取 Embedding API 配置（优先级：指定配置文件 > .env > 默认配置文件）
-        embedding_config = self.config.get("embedding", {})
-        default_embedding_config = default_config.get("embedding", {})
-        embedding_api_key = (
-            embedding_config.get("api_key") or 
-            os.getenv("EMBEDDING_API_KEY") or 
-            default_embedding_config.get("api_key")
-        )
-        embedding_base_url = (
-            embedding_config.get("base_url") or 
-            os.getenv("EMBEDDING_BASE_URL") or 
-            default_embedding_config.get("base_url")
-        )
-
-        if not embedding_api_key:
-            raise ValueError("请在配置文件或 .env 文件中设置 Embedding API Key")
-        if not embedding_base_url:
-            raise ValueError("请在配置文件或 .env 文件中设置 Embedding Base URL")
-
-        # 初始化 LLM
-        self.llm = LLM(
-            model=llm_config.get("model", "MiniMax-M2.1"),
-            api_key=llm_api_key,
-            base_url=llm_base_url,
-            temperature=llm_config.get("temperature", 0.7)
-        )
-
-        # 初始化 Embedding
-        self.embedding = Embedding(
-            model=embedding_config.get("model", "Qwen/Qwen3-Embedding-8B"),
-            api_key=embedding_api_key,
-            base_url=embedding_base_url
-        )
-
-        # 初始化向量数据库
-        vector_config = self.config.get("vector_db", {})
-        db_file = os.path.expanduser(vector_config.get("db_file", "~/.bitwiseai/milvus_data.db"))
-        collection_name = vector_config.get("collection_name", "bitwiseai")
-        embedding_dim = vector_config.get("embedding_dim", 4096)
-
-        self.vector_db = MilvusDB(
-            db_file=db_file,
-            embedding_model=self.embedding,
-            collection_name=collection_name,
-            embedding_dim=embedding_dim
-        )
-
-        # 系统提示词
-        self.system_prompt = self.config.get("system_prompt", "你是 BitwiseAI，专注于硬件指令验证和调试日志分析的 AI 助手。")
-
-        # 文档加载器和切分器
-        self.document_loader = DocumentLoader()
-        self.text_splitter = TextSplitter()
-        
-        # 创建文档管理器配置
-        doc_manager_config = {
-            "similarity_threshold": vector_config.get("similarity_threshold", 0.85),
-            "save_chunks": vector_config.get("save_chunks", False),
-            "chunks_dir": os.path.expanduser(vector_config.get("chunks_dir", "~/.bitwiseai/chunks"))
-        }
-        
-        # 初始化文档管理器
-        self.document_manager = DocumentManager(
-            vector_db=self.vector_db,
-            document_loader=self.document_loader,
-            text_splitter=self.text_splitter,
-            config=doc_manager_config
-        )
-        
-        # RAG引擎配置（包含文档名匹配配置）
-        rag_config = {
-            **doc_manager_config,
-            "enable_document_name_matching": vector_config.get("enable_document_name_matching", True),
-            "document_name_match_threshold": vector_config.get("document_name_match_threshold", 0.3)
-        }
-        
-        # 初始化 RAG 引擎（使用DocumentManager和配置）
-        self.rag_engine = RAGEngine(
-            vector_db=self.vector_db,
-            document_manager=self.document_manager,
-            config=rag_config
-        )
-        
-        # 初始化技能索引器（如果启用）
-        skill_config = self.config.get("skills", {})
-        skill_indexer = None
-        if skill_config.get("index_to_vector_db", True):
-            try:
-                skill_collection_name = skill_config.get("skill_collection_name", "bitwiseai_skills")
-                skill_indexer = SkillIndexer(
-                    vector_db=self.vector_db,
-                    collection_name=skill_collection_name,
-                    embedding_dim=embedding_dim
-                )
-            except Exception as e:
-                print(f"⚠️  初始化技能索引器失败: {e}")
-        
-        # 初始化 Skill 管理器
-        self.skill_manager = SkillManager(
-            builtin_skills_dir=None,  # 使用默认路径
-            skill_indexer=skill_indexer
-        )
-        
-        # 添加外部技能目录
-        external_dirs = skill_config.get("external_directories", [])
-        if not external_dirs:
-            # 默认外部技能目录
-            external_dirs = ["~/.bitwiseai/skills"]
-        
-        for ext_dir in external_dirs:
-            self.skill_manager.add_skills_directory(ext_dir)
-        
-        # 扫描所有技能
-        self.skill_manager.scan_skills()
-        
-        # 自动加载指定的 skills
-        auto_load_skills = skill_config.get("auto_load", ["asm-parser", "hex-converter", "error-analyzer"])
-        for skill_name in auto_load_skills:
-            if skill_name in self.skill_manager.list_available_skills():
-                self.skill_manager.load_skill(skill_name)
-        
-        # 初始化聊天引擎
-        self.chat_engine = ChatEngine(
-            llm=self.llm,
-            rag_engine=self.rag_engine,
-            skill_manager=self.skill_manager,
-            system_prompt=self.system_prompt
-        )
-        
         # 任务管理
         self.tasks: List[TaskInterface] = []
         self.task_results: Dict[str, List[AnalysisResult]] = {}
-        
-        # 当前日志文件路径（用于任务执行）
         self.log_file_path: Optional[str] = None
+
+        # 打印启动信息
+        self._print_startup_info()
+
+    def _load_config(self) -> dict:
+        """
+        加载配置文件
+
+        从 ~/.bitwiseai/config.json 加载配置
+        用户运行 'bitwiseai config --force' 生成配置文件后，
+        应该直接编辑该文件来配置 API 密钥和其他参数
+        """
+        default_path = os.path.expanduser("~/.bitwiseai/config.json")
+
+        # 从默认配置开始
+        config = {}
+
+        # 加载默认配置文件
+        if os.path.exists(default_path):
+            try:
+                with open(default_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            except (json.JSONDecodeError, IOError) as e:
+                print(f"⚠️  配置文件读取失败: {e}")
+                print(f"   请运行: bitwiseai config --force")
+        else:
+            print(f"⚠️  配置文件不存在: {default_path}")
+            print(f"   请运行: bitwiseai config --force")
+
+        # 加载指定配置（覆盖默认配置）
+        if self.config_path != default_path and os.path.exists(self.config_path):
+            try:
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    specified_config = json.load(f)
+                    config.update(specified_config)
+            except (json.JSONDecodeError, IOError) as e:
+                print(f"⚠️  指定配置文件读取失败: {e}")
+
+        # 不再从环境变量加载配置
+        # 所有配置应通过编辑 ~/.bitwiseai/config.json 完成
+        return config
+
+    def _validate_config(self):
+        """验证配置完整性"""
+        errors = []
+
+        # 验证 LLM 配置
+        llm_config = self.config.get("llm", {})
+        if not llm_config.get("api_key"):
+            errors.append("LLM_API_KEY 未设置")
+        if not llm_config.get("base_url"):
+            errors.append("LLM_BASE_URL 未设置")
+
+        # 验证 Embedding 配置（仅在需要时）
+        try:
+            from .core import RAGEngine
+            embedding_config = self.config.get("embedding", {})
+            if not embedding_config.get("api_key"):
+                errors.append("EMBEDDING_API_KEY 未设置")
+            if not embedding_config.get("base_url"):
+                errors.append("EMBEDDING_BASE_URL 未设置")
+        except ImportError:
+            # RAGEngine 不可用，跳过验证
+            pass
+
+        if errors:
+            raise ValueError(
+                "配置不完整，请设置以下环境变量或配置文件:\n" +
+                "\n".join(f"  - {e}" for e in errors) +
+                "\n\n或运行: bitwiseai config --force"
+            )
+
+    def _init_components(self):
+        """
+        初始化所有组件
+
+        初始化顺序（依赖链）：
+        1. LLM（最底层，无依赖）
+        2. Embedding（无依赖）
+        3. MemoryManager（依赖 Embedding）
+        4. DocumentManager（依赖 MemoryManager）
+        5. RAGEngine（依赖 MemoryManager, DocumentManager）
+        6. SkillManager（依赖 MemoryManager）
+        7. ChatEngine（依赖上述所有）
+        """
+        # 1. 初始化 LLM
+        self._init_llm()
+
+        # 2. 初始化 Embedding
+        self._init_embedding()
+
+        # 3. 初始化记忆系统（替代 VectorDB）
+        self._init_memory_system()
+
+        # 4. 初始化文档管理器
+        self._init_document_manager()
+
+        # 5. 初始化 RAG 引擎
+        self._init_rag_engine()
+
+        # 6. 初始化 Skill 系统
+        self._init_skills()
+
+        # 7. 初始化聊天引擎（最后，依赖最多）
+        self._init_chat_engine()
+
+    def _init_llm(self):
+        """初始化 LLM"""
+        llm_config = self.config.get("llm", {})
+
+        self.llm = LLM(
+            model=llm_config.get("model", "gpt-4o-mini"),
+            api_key=llm_config["api_key"],
+            base_url=llm_config["base_url"],
+            temperature=llm_config.get("temperature", 0.7)
+        )
+
+    def _init_embedding(self):
+        """初始化 Embedding"""
+        embedding_config = self.config.get("embedding", {})
+
+        self.embedding = Embedding(
+            model=embedding_config.get("model", "text-embedding-3-small"),
+            api_key=embedding_config["api_key"],
+            base_url=embedding_config["base_url"]
+        )
+
+    def _init_memory_system(self):
+        """初始化记忆系统（替代 MilvusDB）"""
+        from .core.memory import MemoryManager, MemoryConfig, OpenAIEmbeddingProvider
+
+        memory_config = self.config.get("memory", {})
+        embedding_config = self.config.get("embedding", {})
+
+        # 创建 Embedding Provider
+        embedding_provider = OpenAIEmbeddingProvider(
+            api_key=embedding_config["api_key"],
+            base_url=embedding_config.get("base_url"),
+            model=embedding_config.get("model", "text-embedding-3-small")
+        )
+
+        # 创建 MemoryManager
+        config = MemoryConfig.from_dict(memory_config)
+        self.memory_manager = MemoryManager(
+            workspace_dir=memory_config.get("workspace_dir", "~/.bitwiseai"),
+            db_path=memory_config.get("db_path"),
+            embedding_provider=embedding_provider,
+            config=config
+        )
+
+        # 初始化记忆系统
+        self.memory_manager.initialize()
+        print("✓ 记忆系统初始化完成")
+
+    def _init_document_manager(self):
+        """初始化文档管理器"""
+        rag_config = self.config.get("rag", {})
+
+        self.document_loader = DocumentLoader()
+        self.text_splitter = TextSplitter()
+
+        doc_config = {
+            "similarity_threshold": rag_config.get("similarity_threshold", 0.85),
+            "save_chunks": rag_config.get("save_chunks", False),
+            "chunks_dir": os.path.expanduser(rag_config.get("chunks_dir", "~/.bitwiseai/chunks"))
+        }
+
+        self.document_manager = DocumentManager(
+            memory_manager=self.memory_manager,
+            document_loader=self.document_loader,
+            text_splitter=self.text_splitter,
+            config=doc_config
+        )
+
+    def _init_rag_engine(self):
+        """初始化 RAG 引擎"""
+        rag_config = self.config.get("rag", {})
+
+        rag_engine_config = {
+            "similarity_threshold": rag_config.get("similarity_threshold", 0.85),
+            "save_chunks": rag_config.get("save_chunks", False),
+            "chunks_dir": os.path.expanduser(rag_config.get("chunks_dir", "~/.bitwiseai/chunks")),
+            "enable_document_name_matching": rag_config.get("enable_document_name_matching", True),
+            "document_name_match_threshold": rag_config.get("document_name_match_threshold", 0.3)
+        }
+
+        self.rag_engine = RAGEngine(
+            memory_manager=self.memory_manager,
+            document_manager=self.document_manager,
+            config=rag_engine_config
+        )
+
+    def _init_skills(self):
+        """初始化 Skill 系统"""
+        skill_config = self.config.get("skills", {})
+
+        # 初始化技能索引器
+        skill_indexer = None
+        if skill_config.get("index_to_memory", True):
+            try:
+                skill_indexer = SkillIndexer(
+                    memory_manager=self.memory_manager
+                )
+            except Exception as e:
+                print(f"⚠️  初始化技能索引器失败: {e}")
+
+        # 初始化 Skill 管理器
+        self.skill_manager = SkillManager(skill_indexer=skill_indexer)
+
+        # 添加外部技能目录
+        external_dirs = skill_config.get("external_directories", ["~/.bitwiseai/skills"])
+        for ext_dir in external_dirs:
+            self.skill_manager.add_skills_directory(ext_dir)
+
+        # 扫描技能
+        self.skill_manager.scan_skills()
+
+        # 自动加载技能
+        auto_load = skill_config.get("auto_load", [])
+        for skill_name in auto_load:
+            if skill_name in self.skill_manager.list_available_skills():
+                self.skill_manager.load_skill(skill_name)
+
+    def _init_chat_engine(self):
+        """
+        初始化聊天引擎
+
+        尝试使用增强版引擎，失败时降级到普通引擎
+        """
+        self.system_prompt = self.config.get(
+            "system_prompt",
+            "你是 BitwiseAI，专注于硬件指令验证和调试日志分析的 AI 助手。"
+        )
+
+        # 普通引擎（降级选项）
+        def create_standard_engine():
+            return ChatEngine(
+                llm=self.llm,
+                rag_engine=self.rag_engine,
+                skill_manager=self.skill_manager,
+                system_prompt=self.system_prompt
+            )
+
+        # 如果不需要增强版，直接使用普通引擎
+        if not self.use_enhanced:
+            self.enhanced_engine = None
+            self.chat_engine = create_standard_engine()
+            return
+
+        # 暂时禁用增强版引擎，使用标准引擎
+        self.enhanced_engine = None
+        self.chat_engine = create_standard_engine()
+        print("使用标准版引擎")
+
+    def _create_enhanced_engine(self):
+        """
+        创建增强版引擎
+
+        Returns:
+            EnhancedChatEngine 实例
+
+        Raises:
+            ImportError: 如果增强版依赖缺失
+            Exception: 如果初始化失败
+        """
+        # 动态导入，避免普通模式下的依赖问题
+        try:
+            from .core import EnhancedChatEngine
+        except ImportError as e:
+            raise ImportError(f"EnhancedChatEngine 不可用: {e}")
+
+        llm_config_data = self.config.get("llm", {})
+        llm_config = LLMConfig(
+            provider=LLMProvider.OPENAI,
+            model=llm_config_data.get("model", "gpt-4o-mini"),
+            api_key=llm_config_data.get("api_key", ""),
+            base_url=llm_config_data.get("base_url", ""),
+            temperature=llm_config_data.get("temperature", 0.7),
+        )
+
+        return EnhancedChatEngine(
+            llm_config=llm_config,
+            rag_engine=self.rag_engine,
+            skill_manager=self.skill_manager,
+            system_prompt=self.system_prompt,
+            auto_save=True,
+        )
+
+    def _print_startup_info(self):
+        """打印启动信息"""
+        llm_config = self.config.get("llm", {})
+        embedding_config = self.config.get("embedding", {})
+        memory_status = self.memory_manager.status()
 
         print("=" * 50)
         print("BitwiseAI 初始化完成")
-        print(f"  LLM 模型: {llm_config.get('model')}")
-        print(f"  Embedding 模型: {embedding_config.get('model')}")
-        print(f"  向量库: {db_file}")
-        print(f"  集合: {collection_name}")
-        print(f"  可用 Skills: {len(self.skill_manager.list_available_skills())}")
-        print(f"  已加载 Skills: {len(self.skill_manager.list_loaded_skills())}")
+        print(f"  模式: {'增强版' if self.enhanced_engine else '标准版'}")
+        print(f"  LLM: {llm_config.get('model', 'N/A')}")
+        print(f"  Embedding: {embedding_config.get('model', 'N/A')}")
+        print(f"  记忆系统: {'已启用' if memory_status.initialized else '未初始化'}")
+        print(f"  记忆文件数: {memory_status.files}")
+        print(f"  记忆块数: {memory_status.chunks}")
+        print(f"  Skills: {len(self.skill_manager.list_available_skills())} 个")
+        print(f"  已加载: {len(self.skill_manager.list_loaded_skills())} 个")
         print("=" * 50)
 
-    def _load_config(self) -> dict:
-        """加载配置文件"""
-        if os.path.exists(self.config_path):
-            with open(self.config_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        return {}
-
-    def set_system_prompt(self, prompt: str):
-        """
-        设置系统提示词
-
-        Args:
-            prompt: 系统提示词内容
-        """
-        self.system_prompt = prompt
-        print(f"系统提示词已更新: {prompt[:50]}...")
-
-    def load_documents(self, folder_path: str, skip_duplicates: bool = True) -> Dict[str, Any]:
-        """
-        加载文件夹中的所有文档
-
-        Args:
-            folder_path: 文件夹路径
-            skip_duplicates: 是否跳过重复文档
-
-        Returns:
-            包含统计信息的字典：
-                - total: 总文档片段数
-                - inserted: 实际插入的片段数
-                - skipped: 跳过的重复片段数
-        """
-        return self.rag_engine.load_documents(folder_path, skip_duplicates=skip_duplicates)
-
-    def add_text(self, text: str) -> int:
-        """
-        添加单个文本到向量数据库
-
-        Args:
-            text: 文本内容
-
-        Returns:
-            插入的片段数量
-        """
-        return self.rag_engine.add_text(text)
+    # ========== 对话 API ==========
 
     def chat(
         self,
         query: str,
         use_rag: bool = True,
         use_tools: bool = True,
-        history: Optional[List[dict]] = None
+        history: Optional[List[dict]] = None,
+        skill_context: Optional[str] = None
     ) -> str:
         """
         对话方法（非流式）
 
-        Args:
-            query: 用户问题
-            use_rag: 是否使用 RAG 模式（默认 True）
-            use_tools: 是否使用工具（默认 True）
-            history: 历史消息列表 [{"role": "user", "content": "..."}, ...]
-
-        Returns:
-            LLM 生成的回答
+        自动处理同步和异步引擎
         """
-        return self.chat_engine.chat(query, use_rag=use_rag, use_tools=use_tools, history=history)
+        import asyncio
+        import inspect
+
+        # 调用 chat 引擎的方法
+        result = self.chat_engine.chat(
+            query=query,
+            use_rag=use_rag,
+            use_tools=use_tools,
+            history=history,
+            skill_context=skill_context
+        )
+
+        # 如果结果是协程，运行它
+        if inspect.iscoroutine(result):
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(asyncio.run, result)
+                        return future.result()
+                else:
+                    return asyncio.run(result)
+            except RuntimeError:
+                return asyncio.run(result)
+
+        return result
 
     def chat_stream(
         self,
@@ -300,372 +437,269 @@ class BitwiseAI:
         """
         流式对话方法
 
+        自动处理同步和异步引擎
+        """
+        yield from self.chat_engine.chat_stream(
+            query=query,
+            use_rag=use_rag,
+            use_tools=use_tools,
+            history=history
+        )
+
+    # ========== Agent 循环 API ==========
+
+    async def chat_with_agent(
+        self,
+        query: str,
+        agent_config: Optional[AgentConfig] = None,
+        loop_config: Optional[LoopConfig] = None,
+    ) -> str:
+        """使用 Agent 循环进行对话"""
+        if not self.enhanced_engine:
+            raise RuntimeError(
+                "Agent 模式需要增强版引擎。"
+                "请初始化时设置 use_enhanced=True，"
+                "或检查是否缺少相关依赖。"
+            )
+
+        return await self.enhanced_engine.chat_with_agent(
+            query=query,
+            agent_config=agent_config,
+            loop_config=loop_config,
+        )
+
+    async def chat_with_agent_stream(
+        self,
+        query: str,
+        agent_config: Optional[AgentConfig] = None,
+    ) -> Iterator[str]:
+        """使用 Agent 循环进行对话（流式）"""
+        if not self.enhanced_engine:
+            raise RuntimeError("Agent 模式需要增强版引擎")
+
+        async for token in self.enhanced_engine.chat_with_agent_stream(
+            query=query,
+            agent_config=agent_config,
+        ):
+            yield token
+
+    # ========== 会话管理 API ==========
+
+    async def new_session(self, name: str):
+        """创建新会话"""
+        if not self.enhanced_engine:
+            raise RuntimeError("会话管理需要增强版引擎")
+        return await self.enhanced_engine.new_session(name)
+
+    async def switch_session(self, session_id: str):
+        """切换会话"""
+        if not self.enhanced_engine:
+            raise RuntimeError("会话管理需要增强版引擎")
+        return await self.enhanced_engine.switch_session(session_id)
+
+    async def delete_session(self, session_id: str) -> bool:
+        """删除会话"""
+        if not self.enhanced_engine:
+            raise RuntimeError("会话管理需要增强版引擎")
+        return await self.enhanced_engine.delete_session(session_id)
+
+    def list_sessions(self) -> list:
+        """列出所有会话"""
+        if not self.enhanced_engine:
+            return []
+        return self.enhanced_engine.list_sessions()
+
+    # ========== 记忆系统 API（新增）==========
+
+    def append_to_memory(self, content: str, to_long_term: bool = False) -> None:
+        """
+        追加内容到记忆系统
+
         Args:
-            query: 用户问题
-            use_rag: 是否使用 RAG 模式（默认 True）
-            use_tools: 是否使用工具（默认 True）
-            history: 历史消息列表 [{"role": "user", "content": "..."}, ...]
+            content: 要记录的内容
+            to_long_term: 是否直接写入长期记忆
+        """
+        if to_long_term:
+            self.memory_manager.promote_to_long_term(content)
+        else:
+            self.memory_manager.append_to_short_term(content)
 
-        Yields:
-            每个 token 的字符串片段
+    def search_memory(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
         """
-        yield from self.chat_engine.chat_stream(query, use_rag=use_rag, use_tools=use_tools, history=history)
+        搜索记忆系统
 
-    def clear_vector_db(self):
+        Args:
+            query: 查询文本
+            max_results: 最大结果数
+
+        Returns:
+            搜索结果列表
         """
-        清空向量数据库
+        results = self.memory_manager.search_sync(query, max_results=max_results)
+        return [
+            {
+                "text": r.text,
+                "path": r.path,
+                "score": r.score,
+                "start_line": r.start_line,
+                "end_line": r.end_line,
+            }
+            for r in results
+        ]
+
+    def get_memory_stats(self) -> Dict[str, Any]:
+        """获取记忆系统统计信息"""
+        stats = self.memory_manager.stats()
+        status = self.memory_manager.status()
+        return {
+            "total_files": stats.total_files,
+            "total_chunks": stats.total_chunks,
+            "total_vectors": stats.total_vectors,
+            "cache_entries": stats.cache_entries,
+            "db_size_bytes": stats.db_size_bytes,
+            "initialized": status.initialized,
+            "watching": status.watching,
+        }
+
+    def compact_memory(self, days_to_keep: int = 7) -> Dict[str, Any]:
         """
+        压缩短期记忆
+
+        Args:
+            days_to_keep: 保留天数
+
+        Returns:
+            压缩结果统计
+        """
+        result = self.memory_manager.compact_short_term(days_to_keep=days_to_keep)
+        return {
+            "files_compacted": result.files_compacted,
+            "files_archived": result.files_archived,
+            "summaries_generated": result.summaries_generated,
+        }
+
+    # ========== 文档管理 API ==========
+
+    def load_documents(self, folder_path: str, skip_duplicates: bool = True) -> Dict[str, Any]:
+        """加载文件夹中的所有文档"""
+        return self.rag_engine.load_documents(folder_path, skip_duplicates=skip_duplicates)
+
+    def add_text(self, text: str, source: Optional[str] = None) -> int:
+        """添加单个文本到知识库
+
+        Args:
+            text: 要添加的文本内容
+            source: 文本来源标识（如文件名）
+
+        Returns:
+            添加的文档数量
+        """
+        return self.rag_engine.add_text(text, source=source)
+
+    def clear_memory_db(self):
+        """清空记忆系统数据库"""
         self.rag_engine.clear()
-        print("✓ 向量数据库已清空")
-    
+        print("✓ 记忆系统数据库已清空")
+
     # ========== Skill 管理 API ==========
-    
+
     def load_skill(self, name: str) -> bool:
-        """
-        加载 skill
-        
-        Args:
-            name: Skill 名称
-            
-        Returns:
-            是否加载成功
-        """
+        """加载 skill"""
         return self.skill_manager.load_skill(name)
-    
+
     def unload_skill(self, name: str) -> bool:
-        """
-        卸载 skill
-        
-        Args:
-            name: Skill 名称
-            
-        Returns:
-            是否卸载成功
-        """
+        """卸载 skill"""
         return self.skill_manager.unload_skill(name)
-    
+
     def list_skills(self, loaded_only: bool = False) -> List[str]:
-        """
-        列出所有 skills
-        
-        Args:
-            loaded_only: 是否只列出已加载的 skills
-            
-        Returns:
-            Skill 名称列表
-        """
+        """列出所有 skills"""
         if loaded_only:
             return self.skill_manager.list_loaded_skills()
         else:
             return self.skill_manager.list_available_skills()
-    
+
     def search_skills(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """
-        搜索相关技能（使用向量检索）
-        
-        Args:
-            query: 查询文本
-            top_k: 返回结果数量
-            
-        Returns:
-            技能信息列表
-        """
+        """搜索相关技能"""
         return self.skill_manager.search_skills(query, top_k)
-    
+
     def add_skills_directory(self, path: str) -> bool:
-        """
-        添加外部技能目录
-        
-        Args:
-            path: 技能目录路径
-            
-        Returns:
-            是否添加成功
-        """
+        """添加外部技能目录"""
         return self.skill_manager.add_skills_directory(path)
-    
-    # ========== 向后兼容的工具管理 API ==========
-    
+
+    # ========== 检查点 API ==========
+
+    def create_checkpoint(self, description: str = "") -> int:
+        """创建检查点"""
+        if not self.enhanced_engine:
+            raise RuntimeError("检查点功能需要增强版引擎")
+        return self.enhanced_engine.create_checkpoint(description)
+
+    def rollback_to_checkpoint(self, checkpoint_id: int) -> bool:
+        """回滚到检查点"""
+        if not self.enhanced_engine:
+            raise RuntimeError("检查点功能需要增强版引擎")
+        return self.enhanced_engine.rollback_to_checkpoint(checkpoint_id)
+
+    def list_checkpoints(self) -> list:
+        """列出所有检查点"""
+        if not self.enhanced_engine:
+            return []
+        return self.enhanced_engine.list_checkpoints()
+
+    # ========== 向后兼容 API ==========
+
     def invoke_tool(self, name: str, *args, **kwargs) -> Any:
-        """
-        调用工具（向后兼容）
-        
-        注意：此方法已废弃，请使用 skill 系统
-        
-        Args:
-            name: 工具名称
-            *args: 位置参数
-            **kwargs: 关键字参数
-            
-        Returns:
-            工具执行结果
-        """
-        # 在所有已加载的 skills 中查找工具
+        """调用工具（向后兼容）"""
         for skill_name in self.skill_manager.list_loaded_skills():
             skill = self.skill_manager.get_skill(skill_name)
             if skill and skill.loaded and name in skill.tools:
                 func = skill.tools[name]["function"]
                 return func(*args, **kwargs)
-        
         raise ValueError(f"工具不存在: {name}")
-    
-    def list_tools(self) -> List[str]:
-        """
-        列出所有工具（向后兼容）
-        
-        注意：此方法已废弃，请使用 skill 系统
-        
-        Returns:
-            工具名称列表
-        """
-        tool_names = []
-        for skill_name in self.skill_manager.list_loaded_skills():
-            skill = self.skill_manager.get_skill(skill_name)
-            if skill and skill.loaded:
-                tool_names.extend(skill.tools.keys())
-        return tool_names
-    
-    # ========== 任务管理 API ==========
-    
-    def register_task(self, task: TaskInterface):
-        """
-        注册分析任务
-        
-        Args:
-            task: 任务对象，实现 TaskInterface 接口
-            
-        示例:
-            class MyTask(AnalysisTask):
-                def analyze(self, context, parsed_data):
-                    # 自定义分析逻辑
-                    results = []
-                    # ... 分析代码 ...
-                    return results
-            
-            ai.register_task(MyTask())
-        """
-        self.tasks.append(task)
-        print(f"✓ 任务已注册: {task.get_name()}")
-    
-    def execute_task(self, task: Union[TaskInterface, str]) -> List[AnalysisResult]:
-        """
-        执行任务
-        
-        Args:
-            task: 任务对象或任务名称
-            
-        Returns:
-            任务执行结果列表
-        """
-        # 查找任务
-        if isinstance(task, str):
-            task_obj = None
-            for t in self.tasks:
-                if t.get_name() == task:
-                    task_obj = t
-                    break
-            if not task_obj:
-                raise ValueError(f"任务不存在: {task}")
-        else:
-            task_obj = task
-        
-        # 执行任务
-        print(f"▶ 执行任务: {task_obj.get_name()}")
-        results = task_obj.execute(self)
-        
-        # 保存结果
-        self.task_results[task_obj.get_name()] = results
-        
-        print(f"✓ 任务完成: {len(results)} 个结果")
-        return results
-    
-    def execute_all_tasks(self) -> Dict[str, List[AnalysisResult]]:
-        """
-        执行所有已注册的任务
-        
-        Returns:
-            任务名称到结果列表的字典
-        """
-        print(f"▶ 执行 {len(self.tasks)} 个任务...")
-        
-        for task in self.tasks:
-            self.execute_task(task)
-        
-        return self.task_results
-    
-    def list_tasks(self) -> List[str]:
-        """
-        列出所有已注册的任务
-        
-        Returns:
-            任务名称列表
-        """
-        return [task.get_name() for task in self.tasks]
-    
-    # ========== 日志分析 API ==========
-    
+
     def load_log_file(self, file_path: str):
-        """
-        加载日志文件
-        
-        Args:
-            file_path: 日志文件路径
-        """
+        """加载日志文件"""
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"日志文件不存在: {file_path}")
-        
         self.log_file_path = file_path
         print(f"✓ 已加载日志文件: {file_path}")
-    
+
     def load_specification(self, spec_path: str):
-        """
-        加载规范文档到向量数据库
-        
-        Args:
-            spec_path: 规范文档路径（文件或目录）
-        """
+        """加载规范文档到知识库"""
         if os.path.isdir(spec_path):
             self.load_documents(spec_path)
         elif os.path.isfile(spec_path):
             with open(spec_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            self.add_text(content)
-        else:
-            raise ValueError(f"规范文档不存在: {spec_path}")
-        
-        print(f"✓ 规范文档已加载到知识库")
-    
+                self.add_text(f.read())
+        print("✓ 规范文档已加载到知识库")
+
     def query_specification(self, query: str, top_k: int = 5) -> str:
-        """
-        查询规范文档
-
-        Args:
-            query: 查询内容
-            top_k: 返回结果数量
-
-        Returns:
-            相关文档内容
-        """
+        """查询规范文档"""
         return self.rag_engine.search(query, top_k=top_k)
-    
-    # ========== 报告生成 API ==========
-    
-    def generate_report(self, format: str = "markdown") -> str:
-        """
-        生成分析报告
-        
-        Args:
-            format: 报告格式，支持 "text", "markdown", "json"
-            
-        Returns:
-            报告内容
-        """
-        from datetime import datetime
-        
-        # 收集所有任务结果
-        all_results = []
-        for task_name, results in self.task_results.items():
-            all_results.extend(results)
-        
-        if format == "text":
-            lines = [
-                "=" * 60,
-                "BitwiseAI 分析报告",
-                f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                "=" * 60,
-                "",
-                f"总结果数: {len(all_results)}",
-                ""
-            ]
-            return "\n".join(lines)
-        elif format == "markdown":
-            lines = [
-                "# BitwiseAI 分析报告",
-                "",
-                f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                "",
-                "## 摘要",
-                "",
-                f"- 总结果数: {len(all_results)}",
-                ""
-            ]
-            return "\n".join(lines)
-        elif format == "json":
-            import json
-            report = {
-                "timestamp": datetime.now().isoformat(),
-                "total_results": len(all_results),
-                "results": [
-                    {
-                        "status": getattr(r, 'status', 'unknown'),
-                        "message": getattr(r, 'message', ''),
-                        "data": getattr(r, 'data', {})
-                    }
-                    for r in all_results
-                ]
-            }
-            return json.dumps(report, ensure_ascii=False, indent=2)
-        else:
-            raise ValueError(f"不支持的报告格式: {format}")
-    
-    def save_report(self, file_path: str, format: str = "markdown"):
-        """
-        保存报告到文件
-        
-        Args:
-            file_path: 文件路径
-            format: 报告格式
-        """
-        report = self.generate_report(format)
-        
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(report)
-        
-        print(f"✓ 报告已保存: {file_path}")
-    
-    # ========== AI 辅助分析 API ==========
-    
-    def analyze_with_llm(self, prompt: str, use_rag: bool = True) -> str:
-        """
-        使用 LLM 进行辅助分析
-        
-        Args:
-            prompt: 分析提示
-            use_rag: 是否使用 RAG 查询规范文档
-            
-        Returns:
-            LLM 的分析结果
-        """
-        return self.chat(prompt, use_rag=use_rag)
-    
+
     def ask_about_log(self, question: str) -> str:
-        """
-        询问关于日志的问题
-        
-        Args:
-            question: 问题
-            
-        Returns:
-            LLM 的回答
-        """
+        """询问关于日志的问题"""
         if self.log_file_path:
-            # 读取日志内容
             with open(self.log_file_path, 'r', encoding='utf-8') as f:
-                log_content = f.read(10000)  # 读取前 10000 字符
-            
-            prompt = f"""基于以下日志内容回答问题：
-
-日志内容（部分）：
-```
-{log_content}
-```
-
-问题：{question}
-
-回答："""
+                log_content = f.read(10000)
+            prompt = f"基于以下日志内容回答问题：\n\n```\n{log_content}\n```\n\n问题：{question}"
             return self.llm.invoke(prompt)
-        else:
-            return self.chat(question, use_rag=True)
+        return self.chat(question, use_rag=True)
+
+    # ========== 清理 API ==========
+
+    def close(self):
+        """关闭 BitwiseAI，释放资源"""
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.close()
+
+    def __enter__(self):
+        """上下文管理器入口"""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """上下文管理器出口"""
+        self.close()
 
 
 __all__ = ["BitwiseAI"]
