@@ -7,7 +7,6 @@
 import os
 import re
 from typing import List, Dict, Optional, Set
-from ..vector_database import MilvusDB
 
 
 class DocumentNameMatcher:
@@ -19,7 +18,7 @@ class DocumentNameMatcher:
     
     def __init__(
         self,
-        vector_db: MilvusDB,
+        vector_db: object,
         match_threshold: float = 0.3
     ):
         """

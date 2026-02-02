@@ -4,12 +4,13 @@
 
 负责文档的完整生命周期管理：加载、切分、去重、存储、导出
 """
+
 import os
 import json
 import time
 import re
 from typing import List, Dict, Optional, Any
-from ..vector_database import MilvusDB
+
 from ..utils import DocumentLoader, TextSplitter
 
 
@@ -22,7 +23,7 @@ class DocumentManager:
 
     def __init__(
         self,
-        vector_db: MilvusDB,
+        memory_manager,
         document_loader: Optional[DocumentLoader] = None,
         text_splitter: Optional[TextSplitter] = None,
         config: Optional[Dict[str, Any]] = None
@@ -31,7 +32,7 @@ class DocumentManager:
         初始化文档管理器
 
         Args:
-            vector_db: 向量数据库实例
+            memory_manager: MemoryManager 实例
             document_loader: 文档加载器（可选）
             text_splitter: 文本切分器（可选）
             config: 配置字典，包含：
@@ -39,11 +40,16 @@ class DocumentManager:
                 - save_chunks: 是否保存切分结果（默认False）
                 - chunks_dir: 切分结果保存目录
         """
-        self.vector_db = vector_db
+        from ..core.memory import MemoryManager
+
+        if not isinstance(memory_manager, MemoryManager):
+            raise TypeError("memory_manager must be an instance of MemoryManager")
+
+        self.memory_manager = memory_manager
         self.document_loader = document_loader or DocumentLoader()
         self.text_splitter = text_splitter or TextSplitter()
         self.config = config or {}
-        
+
         # 默认配置
         self.similarity_threshold = self.config.get("similarity_threshold", 0.85)
         self.save_chunks = self.config.get("save_chunks", False)
@@ -80,20 +86,20 @@ class DocumentManager:
         chunks_with_metadata = []
         for doc in documents:
             chunks = self.text_splitter.split(doc["content"])
-            
+
             # 提取文档名（去掉路径和扩展名）
             file_path = doc["file_path"]
-            file_name = os.path.splitext(os.path.basename(file_path))[0]  # 去掉扩展名
-            
+            file_name = os.path.splitext(os.path.basename(file_path))[0]
+
             # 提取文档名关键词
             file_name_keywords = self._extract_filename_keywords(file_name)
-            
+
             for idx, chunk in enumerate(chunks):
                 chunks_with_metadata.append({
                     "text": chunk,
                     "source_file": file_path,
-                    "file_name": file_name,  # 新增：文档名
-                    "file_name_keywords": file_name_keywords,  # 新增：文档名关键词
+                    "file_name": file_name,
+                    "file_name_keywords": file_name_keywords,
                     "file_hash": doc["file_hash"],
                     "chunk_index": idx,
                     "chunk_total": len(chunks),
@@ -109,32 +115,21 @@ class DocumentManager:
 
         skipped_count = total_chunks - len(chunks_with_metadata)
 
-        # 4. 存储到向量数据库
+        # 4. 存储到记忆系统
         inserted_count = 0
         if chunks_with_metadata:
-            texts = [c["text"] for c in chunks_with_metadata]
-            metadata = [
-                {
-                    "source_file": c["source_file"],
-                    "file_name": c.get("file_name", ""),  # 新增
-                    "file_name_keywords": c.get("file_name_keywords", ""),  # 新增
-                    "file_hash": c["file_hash"],
-                    "chunk_index": c["chunk_index"],
-                    "chunk_total": c["chunk_total"],
-                    "timestamp": c["timestamp"],
-                    "text_length": c["text_length"]
-                }
-                for c in chunks_with_metadata
-            ]
-            
-            # 添加进度显示
-            print(f"📚 开始处理 {len(texts)} 个文档片段...")
-            try:
-                inserted_count = self.vector_db.add_texts_with_metadata(texts, metadata)
-                print(f"✅ 成功插入 {inserted_count} 个文档片段到向量数据库")
-            except Exception as e:
-                print(f"❌ 插入文档失败: {e}")
-                raise
+            print(f"📚 开始处理 {len(chunks_with_metadata)} 个文档片段...")
+
+            for chunk_data in chunks_with_metadata:
+                # 使用 MemoryManager 索引文档
+                result = self.memory_manager.index_document(
+                    doc_path=chunk_data["source_file"],
+                    content=chunk_data["text"]
+                )
+                if result.success:
+                    inserted_count += 1
+
+            print(f"✅ 成功插入 {inserted_count} 个文档片段到记忆系统")
 
         # 5. 可选：保存切分结果
         if self.save_chunks and chunks_with_metadata:
@@ -153,7 +148,7 @@ class DocumentManager:
         skip_duplicates: bool = True
     ) -> int:
         """
-        添加单个文本到向量数据库
+        添加单个文本到记忆系统
 
         Args:
             text: 文本内容
@@ -173,9 +168,8 @@ class DocumentManager:
             return 0
 
         # 准备元数据
-        chunks_with_metadata = []
         current_time = time.time()
-        
+
         # 提取文档名和关键词
         if source:
             file_name = os.path.splitext(os.path.basename(source))[0]
@@ -183,47 +177,35 @@ class DocumentManager:
         else:
             file_name = ""
             file_name_keywords = ""
-        
+
+        inserted_count = 0
+
         for idx, chunk in enumerate(chunks):
-            chunks_with_metadata.append({
+            chunk_data = {
                 "text": chunk,
                 "source_file": source or "",
-                "file_name": file_name,  # 新增
-                "file_name_keywords": file_name_keywords,  # 新增
+                "file_name": file_name,
+                "file_name_keywords": file_name_keywords,
                 "file_hash": "",
                 "chunk_index": idx,
                 "chunk_total": len(chunks),
                 "timestamp": current_time,
                 "text_length": len(chunk)
-            })
+            }
 
-        # 去重（如果启用）
-        if skip_duplicates:
-            chunks_with_metadata = self._deduplicate_chunks(chunks_with_metadata)
+            # 使用 MemoryManager 索引
+            result = self.memory_manager.index_document(
+                doc_path=source or f"text_{int(time.time())}_{idx}",
+                content=chunk
+            )
+            if result.success:
+                inserted_count += 1
 
-        # 存储到向量数据库
-        if chunks_with_metadata:
-            texts = [c["text"] for c in chunks_with_metadata]
-            metadata = [
-                {
-                    "source_file": c["source_file"],
-                    "file_name": c.get("file_name", ""),  # 新增
-                    "file_name_keywords": c.get("file_name_keywords", ""),  # 新增
-                    "file_hash": c["file_hash"],
-                    "chunk_index": c["chunk_index"],
-                    "chunk_total": c["chunk_total"],
-                    "timestamp": c["timestamp"],
-                    "text_length": c["text_length"]
-                }
-                for c in chunks_with_metadata
-            ]
-            return self.vector_db.add_texts_with_metadata(texts, metadata)
-
-        return 0
+        return inserted_count
 
     def _deduplicate_chunks(self, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        基于嵌入向量相似度去重
+        基于搜索相似度去重
 
         Args:
             chunks: 文档片段列表
@@ -234,39 +216,23 @@ class DocumentManager:
         if not chunks:
             return []
 
-        # 生成嵌入向量
-        texts = [c["text"] for c in chunks]
-        try:
-            print(f"🔄 正在生成嵌入向量进行去重检查 ({len(texts)} 个文本)...")
-            vectors = self.vector_db.embedding_model.embed_documents(texts)
-        except Exception as e:
-            print(f"⚠️  生成嵌入向量失败: {e}")
-            return chunks  # 如果失败，返回原始列表
+        # 使用 MemoryManager 的搜索功能检查重复
+        unique_chunks = []
 
-        # 在Milvus中搜索相似向量
-        threshold = self.similarity_threshold
-        try:
-            similar_results = self.vector_db.search_similar_vectors(
-                vectors, threshold, top_k=1
+        for chunk in chunks:
+            # 搜索相似内容
+            results = self.memory_manager.search_sync(
+                query=chunk["text"][:200],  # 搜索前200字符
+                max_results=1
             )
 
-            # 过滤重复的chunks
-            unique_chunks = []
-            for i, chunk in enumerate(chunks):
-                # 如果没有找到相似结果，或者相似度低于阈值，则保留
-                if not similar_results[i] or len(similar_results[i]) == 0:
-                    unique_chunks.append(chunk)
-                else:
-                    # 检查最高相似度是否低于阈值
-                    max_similarity = max([r["score"] for r in similar_results[i]], default=0.0)
-                    if max_similarity < threshold:
-                        unique_chunks.append(chunk)
-                    # 否则跳过（重复）
+            # 如果找到高相似度结果，则跳过
+            if results and results[0].score >= self.similarity_threshold:
+                continue
 
-            return unique_chunks
-        except Exception as e:
-            print(f"⚠️  去重检查失败: {e}")
-            return chunks  # 如果失败，返回原始列表
+            unique_chunks.append(chunk)
+
+        return unique_chunks
 
     def check_duplicates(self, texts: List[str]) -> List[bool]:
         """
@@ -281,34 +247,22 @@ class DocumentManager:
         if not texts:
             return []
 
-        # 生成嵌入向量
-        try:
-            print(f"🔄 正在生成嵌入向量进行重复检查 ({len(texts)} 个文本)...")
-            vectors = self.vector_db.embedding_model.embed_documents(texts)
-        except Exception as e:
-            print(f"⚠️  生成嵌入向量失败: {e}")
-            return [False] * len(texts)
+        is_duplicate = []
 
-        # 搜索相似向量
-        threshold = self.similarity_threshold
-        try:
-            similar_results = self.vector_db.search_similar_vectors(
-                vectors, threshold, top_k=1
+        for text in texts:
+            # 搜索相似内容
+            results = self.memory_manager.search_sync(
+                query=text[:200],
+                max_results=1
             )
 
-            # 返回是否重复
-            is_duplicate = []
-            for results in similar_results:
-                if results and len(results) > 0:
-                    max_similarity = max([r["score"] for r in results], default=0.0)
-                    is_duplicate.append(max_similarity >= threshold)
-                else:
-                    is_duplicate.append(False)
+            # 如果找到高相似度结果，则标记为重复
+            if results and results[0].score >= self.similarity_threshold:
+                is_duplicate.append(True)
+            else:
+                is_duplicate.append(False)
 
-            return is_duplicate
-        except Exception as e:
-            print(f"⚠️  重复检查失败: {e}")
-            return [False] * len(texts)
+        return is_duplicate
 
     def export_documents(
         self,
@@ -316,7 +270,7 @@ class DocumentManager:
         format: str = "separate_md"
     ) -> int:
         """
-        从向量数据库导出文档为MD格式
+        从记忆系统导出文档为MD格式
 
         Args:
             output_dir: 输出目录
@@ -332,41 +286,35 @@ class DocumentManager:
         output_dir = os.path.expanduser(output_dir)
         os.makedirs(output_dir, exist_ok=True)
 
-        # 从向量数据库获取所有文档
         try:
-            # 查询所有文档（限制数量以避免内存问题）
-            query_result = self.vector_db.client.query(
-                collection_name=self.vector_db.collection_name,
-                filter="",
-                limit=10000,  # 限制查询数量
-                output_fields=["text", "source_file", "file_hash", "chunk_index", "chunk_total"]
+            # 获取所有文档源
+            from ..core.memory import MemorySource
+            results = self.memory_manager.search_sync(
+                query="*",
+                max_results=10000,
+                source_filter=[MemorySource.DOCS]
             )
 
-            if not query_result:
+            if not results:
                 return 0
 
             # 按源文件分组
             files_dict = {}
-            for item in query_result:
-                source_file = item.get("source_file", "unknown")
+            for item in results:
+                source_file = item.path
                 if source_file not in files_dict:
                     files_dict[source_file] = []
 
                 files_dict[source_file].append({
-                    "text": item.get("text", ""),
-                    "chunk_index": item.get("chunk_index", 0),
-                    "chunk_total": item.get("chunk_total", 1)
+                    "text": item.text,
+                    "chunk_id": item.chunk_id
                 })
 
             # 按源文件导出
             exported_count = 0
             for source_file, chunks in files_dict.items():
-                # 按chunk_index排序
-                chunks.sort(key=lambda x: x["chunk_index"])
-
                 # 生成输出文件名
                 if source_file and source_file != "unknown":
-                    # 使用源文件名
                     base_name = os.path.basename(source_file)
                     if not base_name.endswith(".md"):
                         base_name = base_name.rsplit(".", 1)[0] + ".md"
@@ -395,49 +343,42 @@ class DocumentManager:
             统计信息字典
         """
         try:
-            count = self.vector_db.count()
+            stats = self.memory_manager.stats()
             return {
-                "total_chunks": count,
-                "collection_name": self.vector_db.collection_name,
-                "db_file": self.vector_db.db_file
+                "total_chunks": stats.total_chunks,
+                "total_files": stats.total_files,
+                "db_size_bytes": stats.db_size_bytes
             }
         except Exception as e:
             print(f"⚠️  获取统计信息失败: {e}")
-            return {"total_chunks": 0, "collection_name": "", "db_file": ""}
+            return {"total_chunks": 0, "total_files": 0, "db_size_bytes": 0}
 
     def _extract_filename_keywords(self, file_name: str) -> str:
         """
         提取文档名关键词
-        
+
         Args:
             file_name: 文档名（不含扩展名）
-        
+
         Returns:
             关键词字符串（用空格分隔）
         """
         if not file_name:
             return ""
-        
+
         # 尝试使用jieba分词（如果可用）
         try:
             import jieba
-            # 分词
             words = jieba.cut(file_name)
-            # 过滤停用词和单字符
             stop_words = {'的', '是', '在', '有', '和', '与', '或', '但', '如果', '如何', '什么', '哪个', '哪些'}
             keywords = [w for w in words if w not in stop_words and len(w) > 1]
             return " ".join(keywords)
         except ImportError:
-            # 如果没有jieba，使用简单方法：按常见分隔符分割
-            # 处理下划线、连字符、驼峰命名等
-            # 替换常见分隔符为空格
             text = re.sub(r'[_\-\s]+', ' ', file_name)
-            # 处理驼峰命名（简单方法：在大写字母前加空格）
             text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
-            # 分割并过滤
             words = [w for w in text.split() if len(w) > 1]
             return " ".join(words)
-    
+
     def _save_chunks(self, chunks: List[Dict[str, Any]]) -> None:
         """
         保存切分结果到文件（可选功能）
@@ -462,7 +403,6 @@ class DocumentManager:
 
         # 保存每个文件的chunks
         for source_file, file_chunks in files_dict.items():
-            # 生成文件名
             if source_file and source_file != "unknown":
                 base_name = os.path.basename(source_file)
                 json_name = base_name.rsplit(".", 1)[0] + "_chunks.json"
@@ -471,7 +411,6 @@ class DocumentManager:
 
             json_path = os.path.join(chunks_dir, json_name)
 
-            # 保存为JSON
             try:
                 with open(json_path, "w", encoding="utf-8") as f:
                     json.dump(file_chunks, f, ensure_ascii=False, indent=2)
@@ -480,4 +419,3 @@ class DocumentManager:
 
 
 __all__ = ["DocumentManager"]
-

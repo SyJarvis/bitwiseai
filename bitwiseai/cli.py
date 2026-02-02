@@ -1,14 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-BitwiseAI 命令行接口
+BitwiseAI 命令行接口 v2.1
 
-提供方便的命令行工具来使用 BitwiseAI
+提供方便的命令行工具来使用 BitwiseAI 的所有功能
+- 对话模式（支持 Agent 循环）
+- 会话管理
+- Skill 管理
+- 工作流执行
 """
 import argparse
-import sys
+import asyncio
 import os
-from pathlib import Path
-from typing import Optional
+import sys
+from typing import Optional, List
 
 from dotenv import load_dotenv
 
@@ -16,613 +20,722 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from .bitwiseai import BitwiseAI
-from .interfaces import AnalysisTask
+
+
+# 尝试导入 prompt_toolkit，如果不可用则使用简单模式
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.history import InMemoryHistory
+    from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+    from prompt_toolkit.completion import WordCompleter
+    from prompt_toolkit.formatted_text import HTML
+    from prompt_toolkit.output import ColorDepth
+    PROMPT_TOOLKIT_AVAILABLE = True
+except ImportError:
+    PROMPT_TOOLKIT_AVAILABLE = False
+
+
+# ============================================================================
+# 对话模式
+# ============================================================================
+
+
+class ChatSession:
+    """聊天会话管理"""
+
+    def __init__(self, ai: BitwiseAI, use_rag: bool = True):
+        self.ai = ai
+        self.use_rag = use_rag
+        self.messages: List[dict] = []  # 对话历史
+        self.running = True
+
+    def add_message(self, role: str, content: str):
+        """添加消息到历史"""
+        self.messages.append({"role": role, "content": content})
+        # 保留最近 20 条消息
+        if len(self.messages) > 40:
+            self.messages = self.messages[-40:]
+
+    def get_history(self) -> List[dict]:
+        """获取对话历史"""
+        return self.messages.copy()
+
+    def clear_history(self):
+        """清空对话历史"""
+        self.messages = []
 
 
 def chat_mode(args):
     """对话模式"""
     try:
         ai = BitwiseAI(config_path=args.config)
-        
+
         if args.query:
-            # 单次查询（默认启用工具调用）
-            response = ai.chat(args.query, use_rag=args.use_rag, use_tools=True)
-            print(response)
+            # 单次查询（使用流式输出）
+            print("AI: ", end="", flush=True)
+            for token in ai.chat_stream(args.query, use_rag=args.use_rag):
+                print(token, end="", flush=True)
+            print()  # 换行
         else:
             # 交互模式
-            print("=" * 60)
-            print("BitwiseAI 对话模式")
-            print("输入 'quit' 或 'exit' 退出")
-            print("=" * 60)
-            print()
-            
-            history = []
-            while True:
-                try:
-                    user_input = input("你: ").strip()
-                    if not user_input:
-                        continue
-                    
-                    if user_input.lower() in ['quit', 'exit', 'q']:
-                        print("再见！")
-                        break
-                    
-                    response = ai.chat(user_input, use_rag=args.use_rag, use_tools=True, history=history)
-                    print(f"\nAI: {response}\n")
-                    
-                    # 更新历史
-                    history.append({"role": "user", "content": user_input})
-                    history.append({"role": "assistant", "content": response})
-                    
-                except KeyboardInterrupt:
-                    print("\n\n再见！")
-                    break
-                except Exception as e:
-                    print(f"错误: {str(e)}")
-    
+            if PROMPT_TOOLKIT_AVAILABLE:
+                _interactive_mode_prompt_toolkit(ai, args)
+            else:
+                _interactive_mode_simple(ai, args)
+
     except Exception as e:
         print(f"初始化失败: {str(e)}", file=sys.stderr)
         sys.exit(1)
 
 
-def analyze_mode(args):
-    """分析模式"""
+def _print_welcome():
+    """打印欢迎信息"""
+    print("=" * 60)
+    print("BitwiseAI 对话模式")
+    print("=" * 60)
+    print("命令:")
+    print("  /help           - 显示帮助")
+    print("  /clear          - 清空上下文")
+    print("  /sessions       - 列出所有会话")
+    print("  /new <name>     - 创建新会话")
+    print("  /switch <id>    - 切换会话")
+    print("  /skills         - 列出所有 Skills")
+    print("  /load <skill>   - 加载 Skill")
+    print("  /unload <skill> - 卸载 Skill")
+    print("  /skill-name     - 直接使用技能 (如 /asm-parser 解析这段代码)")
+    print("  /agent          - 使用 Agent 模式")
+    print("  /bye 或 /quit   - 退出 (也支持 Ctrl+C)")
+    print("=" * 60)
+    print()
+
+
+def _show_help() -> str:
+    """显示帮助信息"""
+    return """
+可用命令:
+  /help           - 显示此帮助信息
+  /clear          - 清空对话历史
+  /sessions       - 列出所有会话
+  /skills         - 列出所有 Skills
+  /load <skill>   - 加载指定的 Skill
+  /unload <skill> - 卸载指定的 Skill
+  /skill-name     - 直接使用技能 (自动加载并使用技能上下文)
+  /agent [query]  - 使用 Agent 模式执行任务
+  /bye, /quit     - 退出对话 (也支持 Ctrl+C)
+
+使用示例:
+  /load asm-parser         # 加载汇编解析器技能
+  /asm-parser 解析这段代码  # 直接使用技能 (自动加载)
+  /agent 分析这段代码      # 使用 Agent 模式分析
+
+输入技巧:
+  - 直接输入文字即可开始对话
+  - 使用 /skill-name <内容> 快速调用技能
+  - 按 Ctrl+C 或输入 /bye 退出
+"""
+
+
+def _handle_slash_command(session: ChatSession, command: str) -> Optional[str]:
+    """
+    处理斜杠命令，返回 None 表示退出
+
+    首先检查是否是技能名称，如果不是则处理内置命令
+    """
+    parts = command[1:].split(' ', 1)
+    cmd = parts[0].lower()
+    args = parts[1] if len(parts) > 1 else ""
+
+    # 退出命令
+    if cmd in ['bye', 'quit', 'exit']:
+        return None
+
+    # 检查是否是技能名称
+    available_skills = session.ai.list_skills()
+    if cmd in available_skills:
+        # 自动加载技能
+        skill = session.ai.skill_manager.get_skill(cmd)
+        if skill and not skill.loaded:
+            session.ai.load_skill(cmd)
+
+        # 使用技能上下文进行对话
+        actual_query = args if args else f"使用 {cmd} 技能帮助我"
+        return _chat_with_skill(session, cmd, actual_query)
+
+    # 内置命令
+    if cmd == 'help' or cmd == '?':
+        return _show_help()
+    elif cmd == 'clear':
+        session.clear_history()
+        session.ai.chat_engine.history.clear() if hasattr(session.ai.chat_engine, 'history') else None
+        return "✓ 上下文已清空"
+    elif cmd == 'sessions':
+        sessions = session.ai.list_sessions() if hasattr(session.ai, 'list_sessions') else []
+        return f"会话列表 ({len(sessions)} 个):\n" + "\n".join(f"  - {s}" for s in sessions)
+    elif cmd == 'skills':
+        skills = session.ai.list_skills()
+        loaded = session.ai.skill_manager.list_loaded_skills() if hasattr(session.ai, 'skill_manager') else []
+        result = f"可用 Skills ({len(skills)} 个):\n"
+        for s in skills:
+            status = "✅" if s in loaded else "⏸️ "
+            result += f"  {status} {s}\n"
+        return result.strip()
+    elif cmd == 'load' and args:
+        success = session.ai.load_skill(args)
+        return f"✓ Skill '{args}' 已加载" if success else f"❌ Skill '{args}' 加载失败"
+    elif cmd == 'unload' and args:
+        success = session.ai.unload_skill(args)
+        return f"✓ Skill '{args}' 已卸载" if success else f"❌ Skill '{args}' 卸载失败"
+    elif cmd == 'agent':
+        # 切换到 Agent 模式
+        return _agent_mode(session.ai, args or "帮我分析当前问题")
+    else:
+        return f"未知命令或技能: /{cmd}\n使用 /help 查看可用命令，或 /skills 查看可用技能。"
+
+
+def _chat_with_skill(session: ChatSession, skill_name: str, query: str) -> str:
+    """
+    使用技能上下文进行对话
+
+    Args:
+        session: 聊天会话
+        skill_name: 技能名称
+        query: 用户问题
+
+    Returns:
+        AI 回答
+    """
+    skill = session.ai.skill_manager.get_skill(skill_name)
+    if not skill:
+        return f"技能 {skill_name} 不存在"
+
+    if not skill.loaded:
+        if not session.ai.load_skill(skill_name):
+            return f"加载技能 {skill_name} 失败"
+        skill = session.ai.skill_manager.get_skill(skill_name)
+
     try:
-        ai = BitwiseAI(config_path=args.config)
-        
-        # 加载日志文件
-        if not args.log_file or not os.path.exists(args.log_file):
-            print(f"错误: 日志文件不存在: {args.log_file}", file=sys.stderr)
-            sys.exit(1)
-        
-        print(f"加载日志文件: {args.log_file}")
-        ai.load_log_file(args.log_file)
-        
-        # 加载规范文档（如果指定）
-        if args.spec:
-            print(f"加载规范文档: {args.spec}")
-            ai.load_specification(args.spec)
-        
-        # 根据分析类型执行
-        if args.type == "custom":
-            # 自定义分析
-            if args.query:
-                print(f"\n使用 LLM 分析日志...")
-                response = ai.ask_about_log(args.query)
-                print(f"\n分析结果:\n{response}")
-            else:
-                print("错误: 自定义分析需要 --query 参数", file=sys.stderr)
-                sys.exit(1)
-        
-        # 生成报告
-        if args.output:
-            print(f"\n生成报告: {args.output}")
-            ai.save_report(args.output, format=args.format)
-    
+        # 使用技能内容作为上下文
+        response = session.ai.chat(
+            query,
+            use_rag=session.use_rag,
+            use_tools=True,
+            history=session.get_history(),
+            skill_context=skill.content
+        )
+        return response
     except Exception as e:
-        print(f"分析失败: {str(e)}", file=sys.stderr)
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
-
-def query_spec_mode(args):
-    """查询规范模式"""
-    try:
-        ai = BitwiseAI(config_path=args.config)
-        
-        # 加载规范文档
-        if args.spec:
-            print(f"加载规范文档: {args.spec}")
-            ai.load_specification(args.spec)
-        
-        # 查询
-        if args.query:
-            print(f"\n查询: {args.query}")
-            context = ai.query_specification(args.query, top_k=args.top_k)
-            print(f"\n相关文档:\n{context}")
-            
-            if args.use_llm:
-                print("\n使用 LLM 生成回答...")
-                response = ai.chat(args.query, use_rag=True)
-                print(f"\n回答:\n{response}")
+        error_msg = str(e)
+        # 如果是 API 错误，提供更有用的错误信息
+        if '2013' in error_msg or 'invalid' in error_msg.lower():
+            return f"⚠️ LLM API 配置错误 (2013): 当前 LLM 可能不支持工具调用。\n\n" \
+                   f"建议:\n" \
+                   f"1. 检查 LLM 配置是否支持 function calling\n" \
+                   f"2. 或者直接使用技能工具:\n" \
+                   f'   例如: python -c "from bitwiseai.skills.asm-parser.scripts.tools import parse_asm_instruction; print(parse_asm_instruction(\'0x<指令>\'))"'
         else:
-            print("错误: 需要 --query 参数", file=sys.stderr)
-            sys.exit(1)
-    
+            return f"❌ 调用技能失败: {error_msg}"
+
+
+def _agent_mode(ai, query: str) -> str:
+    """Agent 模式"""
+    try:
+        # 使用 Agent 循环执行
+        if hasattr(ai, 'chat_with_agent'):
+            result = asyncio.run(ai.chat_with_agent(query))
+            return result
+        else:
+            # 降级到普通模式
+            return ai.chat(query, use_rag=True)
     except Exception as e:
-        print(f"查询失败: {str(e)}", file=sys.stderr)
-        sys.exit(1)
+        return f"Agent 执行失败: {e}"
 
 
-def tool_mode(args):
-    """Skill 和工具管理模式"""
+def _interactive_mode_prompt_toolkit(ai: BitwiseAI, args):
+    """使用 prompt_toolkit 的交互模式"""
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.history import InMemoryHistory
+    from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+    from prompt_toolkit.completion import WordCompleter
+
+    session = ChatSession(ai, args.use_rag)
+    prompt_session = PromptSession(history=InMemoryHistory())
+    auto_suggest = AutoSuggestFromHistory()
+
+    # 创建命令补全
+    commands = ['/help', '/clear', '/skills', '/load', '/unload', '/agent', '/bye', '/quit']
+    skills = ai.list_skills()
+    skill_commands = [f'/{s}' for s in skills]
+    all_completions = commands + skill_commands
+    completer = WordCompleter(all_completions, ignore_case=True)
+
+    _print_welcome()
+
+    while session.running:
+        try:
+            # 获取用户输入
+            user_input = prompt_session.prompt(
+                HTML('<style fg="cyan">你</style>: '),
+                completer=completer,
+                auto_suggest=auto_suggest,
+            )
+
+            if not user_input.strip():
+                continue
+
+            # 处理斜杠命令
+            if user_input.startswith('/'):
+                result = _handle_slash_command(session, user_input)
+                if result is None:
+                    print("\n再见！")
+                    break
+                print(result)
+                continue
+
+            # 正常对话
+            print()
+
+            # 流式获取响应
+            print(HTML('<style fg="green">AI</style>: '), end="", flush=True)
+            response = ""
+            for token in ai.chat_stream(user_input, use_rag=args.use_rag, history=session.get_history()):
+                print(token, end="", flush=True)
+                response += token
+            print()  # 换行
+            print()
+
+            # 更新历史
+            session.add_message("user", user_input)
+            session.add_message("assistant", response)
+
+        except KeyboardInterrupt:
+            print("\n\n再见！")
+            break
+        except EOFError:
+            print("\n\n再见！")
+            break
+        except Exception as e:
+            print(f"错误: {str(e)}")
+
+
+def _interactive_mode_simple(ai: BitwiseAI, args):
+    """简单的交互模式（不依赖 prompt_toolkit）"""
+    session = ChatSession(ai, args.use_rag)
+
+    _print_welcome()
+
+    while session.running:
+        try:
+            # 获取用户输入
+            user_input = _get_user_input_simple()
+            if not user_input:
+                continue
+
+            # 处理斜杠命令
+            if user_input.startswith('/'):
+                result = _handle_slash_command(session, user_input)
+                if result is None:
+                    print("\n再见！")
+                    break
+                print(result)
+                continue
+
+            # 正常对话
+            print()
+            print("AI: ", end="", flush=True)
+
+            # 流式获取响应
+            response = ""
+            for token in ai.chat_stream(user_input, use_rag=args.use_rag, history=session.get_history()):
+                print(token, end="", flush=True)
+                response += token
+            print()  # 换行
+            print()
+
+            # 更新历史
+            session.add_message("user", user_input)
+            session.add_message("assistant", response)
+
+        except KeyboardInterrupt:
+            print("\n\n再见！")
+            break
+        except Exception as e:
+            print(f"错误: {str(e)}")
+
+
+def _get_user_input_simple() -> str:
+    """获取用户输入（简单模式）"""
+    import sys
+
+    # 显示提示符
+    sys.stdout.write("\033[1;36m你\033[0m: ")
+    sys.stdout.flush()
+
+    lines = []
+    try:
+        while True:
+            line = sys.stdin.readline()
+            if not line:  # EOF
+                break
+
+            line = line.rstrip('\n')
+
+            # 空行结束多行输入
+            if line == "" and lines:
+                break
+
+            lines.append(line)
+
+            # 如果以反斜杠结尾，继续多行输入
+            if line.endswith('\\'):
+                sys.stdout.write("\033[1;36m  ...\033[0m ")
+                sys.stdout.flush()
+                lines[-1] = line[:-1]
+            else:
+                break
+
+    except KeyboardInterrupt:
+        print()
+        return ""
+
+    return "\n".join(lines).strip()
+
+
+# ============================================================================
+# Skill 管理模式
+# ============================================================================
+
+
+def skill_mode(args):
+    """Skill 管理模式"""
     try:
         ai = BitwiseAI(config_path=args.config)
-        
-        if args.list_skills:
-            # 列出所有 skills
+
+        if args.list:
+            # 列出所有 Skills
             skills = ai.list_skills(loaded_only=args.loaded_only)
             print(f"可用 Skills ({len(skills)} 个):")
             for i, skill_name in enumerate(skills, 1):
                 skill = ai.skill_manager.get_skill(skill_name)
                 if skill:
                     status = "✅ 已加载" if skill.loaded else "⏸️ 未加载"
-                    print(f"  {i}. {skill_name} ({status}) - {skill.description or '无描述'}")
-                else:
-                    print(f"  {i}. {skill_name} (❓ 未知)")
-        
-        elif args.load_skill:
-            # 加载 skill
-            skill_name = args.load_skill
-            print(f"加载 Skill: {skill_name}")
-            success = ai.load_skill(skill_name)
+                    print(f"  {i}. {skill_name} ({status})")
+                    if args.verbose:
+                        print(f"     描述: {skill.description or '无描述'}")
+                        n_tools = len(skill.tools) if skill.tools else 0
+                        print(f"     工具: {n_tools} 个")
+
+        elif args.load:
+            # 加载 Skill
+            success = ai.load_skill(args.load)
             if success:
-                print(f"✅ Skill '{skill_name}' 加载成功")
+                print(f"✅ Skill '{args.load}' 加载成功")
             else:
-                print(f"❌ Skill '{skill_name}' 加载失败")
+                print(f"❌ Skill '{args.load}' 加载失败")
                 sys.exit(1)
-        
-        elif args.unload_skill:
-            # 卸载 skill
-            skill_name = args.unload_skill
-            print(f"卸载 Skill: {skill_name}")
-            success = ai.unload_skill(skill_name)
+
+        elif args.unload:
+            # 卸载 Skill
+            success = ai.unload_skill(args.unload)
             if success:
-                print(f"✅ Skill '{skill_name}' 卸载成功")
+                print(f"✅ Skill '{args.unload}' 卸载成功")
             else:
-                print(f"❌ Skill '{skill_name}' 卸载失败")
+                print(f"❌ Skill '{args.unload}' 卸载失败")
                 sys.exit(1)
-        
-        elif args.list_tools:
-            # 按 Skill 分组显示工具数量（不列出单个工具）
-            skills = ai.list_skills(loaded_only=args.loaded_only)
-            print(f"Skills ({len(skills)} 个):")
-            for i, skill_name in enumerate(skills, 1):
-                skill = ai.skill_manager.get_skill(skill_name)
-                n_tools = len(skill.tools) if skill and skill.tools else 0
-                status = "✅ 已加载" if skill and skill.loaded else "⏸️ 未加载"
-                print(f"  {i}. {skill_name} ({status}) - {n_tools} 工具 - {skill.description or '无描述'}")
-        
-        elif args.invoke:
-            # 调用工具
-            tool_name = args.invoke
-            tool_args = args.args or []
-            
-            print(f"调用工具: {tool_name}")
-            print(f"参数: {tool_args}")
-            
-            result = ai.invoke_tool(tool_name, *tool_args)
-            print(f"\n结果: {result}")
-        
-        elif args.add_dir:
-            # 添加外部技能目录
-            path = args.add_dir
-            print(f"添加技能目录: {path}")
-            success = ai.add_skills_directory(path)
-            if success:
-                print(f"✅ 技能目录 '{path}' 添加成功")
-                # 重新扫描技能
-                ai.skill_manager.scan_skills()
-                print(f"✓ 已重新扫描技能，当前可用技能: {len(ai.skill_manager.list_available_skills())} 个")
-            else:
-                print(f"❌ 技能目录 '{path}' 添加失败")
-                sys.exit(1)
-        
+
         elif args.search:
-            # 搜索技能
-            query = args.search
-            top_k = args.top_k
-            print(f"搜索技能: {query}")
-            print(f"返回前 {top_k} 个结果\n")
-            
-            results = ai.search_skills(query, top_k=top_k)
+            # 搜索 Skills
+            results = ai.search_skills(args.search, top_k=args.top_k)
             if results:
-                print(f"找到 {len(results)} 个相关技能:\n")
+                print(f"找到 {len(results)} 个相关 Skills:")
                 for i, result in enumerate(results, 1):
                     skill_name = result.get("skill_name", "未知")
                     description = result.get("description", "无描述")
                     score = result.get("score", 0.0)
                     print(f"  {i}. {skill_name} (相似度: {score:.4f})")
-                    print(f"     描述: {description}")
-                    print()
+                    print(f"     {description}")
             else:
-                print("未找到相关技能")
-        
+                print("未找到相关 Skills")
+
+        elif args.add_dir:
+            # 添加外部目录
+            success = ai.add_skills_directory(args.add_dir)
+            if success:
+                print(f"✅ 已添加目录: {args.add_dir}")
+            else:
+                print(f"❌ 添加目录失败: {args.add_dir}")
+                sys.exit(1)
+
         else:
-            print("错误: 需要指定操作（--list-skills, --load-skill, --unload-skill, --list-tools, --invoke, --add-dir, --search）", file=sys.stderr)
-            sys.exit(1)
-    
+            print("请指定操作。使用 --help 查看帮助。")
+
     except Exception as e:
         print(f"操作失败: {str(e)}", file=sys.stderr)
+        sys.exit(1)
+
+
+# ============================================================================
+# Agent 模式
+# ============================================================================
+
+
+def agent_mode(args):
+    """Agent 模式"""
+    try:
+        ai = BitwiseAI(config_path=args.config)
+
+        # 使用 Agent 循环执行
+        if hasattr(ai, 'chat_with_agent'):
+            if args.stream:
+                # 流式输出
+                print("AI: ", end="", flush=True)
+                async def run_stream():
+                    async for token in ai.chat_with_agent_stream(args.query):
+                        print(token, end="", flush=True)
+                    print()  # 换行
+
+                asyncio.run(run_stream())
+            else:
+                # 非流式
+                response = asyncio.run(ai.chat_with_agent(args.query))
+                print(response)
+        else:
+            # 降级到普通模式
+            print("⚠️ Agent 模式不可用，使用普通对话模式")
+            response = ai.chat(args.query, use_rag=args.use_rag)
+            print(response)
+
+    except Exception as e:
+        print(f"Agent 执行失败: {str(e)}", file=sys.stderr)
         import traceback
         traceback.print_exc()
         sys.exit(1)
 
 
-def generate_config_mode(args):
-    """生成配置文件模式"""
+# ============================================================================
+# 会话管理模式
+# ============================================================================
+
+
+def session_mode(args):
+    """会话管理模式"""
+    try:
+        ai = BitwiseAI(config_path=args.config)
+
+        if args.list:
+            # 列出所有会话
+            if hasattr(ai, 'list_sessions'):
+                sessions = ai.list_sessions()
+                print(f"会话列表 ({len(sessions)} 个):")
+                for i, session_info in enumerate(sessions, 1):
+                    print(f"  {i}. {session_info.get('name', '未命名')}")
+                    print(f"     ID: {session_info.get('session_id', '未知')[:16]}...")
+                    print(f"     消息数: {session_info.get('message_count', 0)}")
+            else:
+                print("❌ 会话功能不可用")
+
+        elif args.new:
+            # 创建新会话
+            if hasattr(ai, 'new_session'):
+                session = asyncio.run(ai.new_session(args.new))
+                print(f"✅ 已创建新会话: {session.info.name}")
+                print(f"   ID: {session.info.session_id}")
+            else:
+                print("❌ 会话功能不可用")
+
+        elif args.switch:
+            # 切换会话
+            if hasattr(ai, 'switch_session'):
+                session = asyncio.run(ai.switch_session(args.switch))
+                if session:
+                    print(f"✅ 已切换到会话: {session.info.name}")
+                else:
+                    print(f"❌ 会话不存在: {args.switch}")
+            else:
+                print("❌ 会话功能不可用")
+
+        elif args.delete:
+            # 删除会话
+            if hasattr(ai, 'delete_session'):
+                success = asyncio.run(ai.delete_session(args.delete))
+                if success:
+                    print(f"✅ 已删除会话: {args.delete}")
+                else:
+                    print(f"❌ 删除失败: {args.delete}")
+            else:
+                print("❌ 会话功能不可用")
+
+        else:
+            print("请指定操作。使用 --help 查看帮助。")
+
+    except Exception as e:
+        print(f"操作失败: {str(e)}", file=sys.stderr)
+        sys.exit(1)
+
+
+# ============================================================================
+# 配置生成模式
+# ============================================================================
+
+
+def config_mode(args):
+    """配置生成模式"""
     import json
-    
-    print("=" * 60)
-    print("BitwiseAI 配置生成器")
-    print("=" * 60)
-    print()
-    
-    # 展开配置路径
+
     config_path = os.path.expanduser(args.config)
     config_dir = os.path.dirname(config_path)
-    
-    # 创建配置目录（如果不存在）
     os.makedirs(config_dir, exist_ok=True)
-    
-    # 检查配置文件是否已存在
-    if os.path.exists(config_path):
-        response = input(f"配置文件已存在: {config_path}\n是否覆盖? (y/N): ").strip().lower()
-        if response != 'y':
-            print("已取消操作")
-            return
-    
-    config = {}
-    
-    # LLM 配置
-    print("LLM 配置:")
-    print("-" * 40)
-    llm_api_key = input("LLM API Key: ").strip()
-    if not llm_api_key:
-        print("错误: LLM API Key 不能为空", file=sys.stderr)
-        sys.exit(1)
-    
-    llm_base_url = input("LLM Base URL (如 https://api.openai.com/v1): ").strip()
-    if not llm_base_url:
-        print("错误: LLM Base URL 不能为空", file=sys.stderr)
-        sys.exit(1)
-    
-    llm_model = input("LLM 模型名称 (默认: MiniMax-M2.1): ").strip()
-    if not llm_model:
-        llm_model = "MiniMax-M2.1"
-    
-    llm_temperature = input("LLM Temperature (默认: 0.7): ").strip()
-    if not llm_temperature:
-        llm_temperature = 0.7
-    else:
-        try:
-            llm_temperature = float(llm_temperature)
-        except ValueError:
-            llm_temperature = 0.7
-    
-    config["llm"] = {
-        "api_key": llm_api_key,
-        "base_url": llm_base_url,
-        "model": llm_model,
-        "temperature": llm_temperature
+
+    if os.path.exists(config_path) and not args.force:
+        print(f"配置文件已存在: {config_path}")
+        print("使用 --force 覆盖现有配置")
+        return
+
+    # 生成默认配置
+    config = {
+        "_comment": "BitwiseAI 配置文件",
+        "_note": "请编辑此文件配置 API 密钥和模型参数",
+        "llm": {
+            "model": "glm-4-flash",
+            "api_key": "your-api-key-here",
+            "base_url": "https://open.bigmodel.cn/api/paas/v4",
+            "temperature": 0.7,
+            "_llm_examples": {
+                "GLM-4": {"model": "glm-4-flash", "base_url": "https://open.bigmodel.cn/api/paas/v4"},
+                "MiniMax": {"model": "MiniMax-M2.1", "base_url": "https://api.minimaxi.com/v1"},
+                "OpenAI": {"model": "gpt-4o-mini", "base_url": "https://api.openai.com/v1"}
+            }
+        },
+        "embedding": {
+            "model": "text-embedding-3-small",
+            "api_key": "your-embedding-api-key-here",
+            "base_url": "https://api.openai.com/v1",
+        },
+        "vector_db": {
+            "db_file": "~/.bitwiseai/milvus_data.db",
+            "collection_name": "bitwiseai",
+            "embedding_dim": 1536,
+            "similarity_threshold": 0.85,
+        },
+        "system_prompt": "你是 BitwiseAI，专注于硬件指令验证和调试日志分析的 AI 助手。",
+        "skills": {
+            "auto_load": [],
+            "external_directories": ["~/.bitwiseai/skills"],
+        },
     }
-    print()
-    
-    # Embedding 配置
-    print("Embedding 配置:")
-    print("-" * 40)
-    embedding_api_key = input("Embedding API Key: ").strip()
-    if not embedding_api_key:
-        print("错误: Embedding API Key 不能为空", file=sys.stderr)
-        sys.exit(1)
-    
-    embedding_base_url = input("Embedding Base URL: ").strip()
-    if not embedding_base_url:
-        print("错误: Embedding Base URL 不能为空", file=sys.stderr)
-        sys.exit(1)
-    
-    embedding_model = input("Embedding 模型名称 (默认: Qwen/Qwen3-Embedding-8B): ").strip()
-    if not embedding_model:
-        embedding_model = "Qwen/Qwen3-Embedding-8B"
-    
-    config["embedding"] = {
-        "api_key": embedding_api_key,
-        "base_url": embedding_base_url,
-        "model": embedding_model
-    }
-    print()
-    
-    # Vector DB 配置
-    print("向量数据库配置:")
-    print("-" * 40)
-    db_file = input(f"数据库文件路径 (默认: ~/.bitwiseai/milvus_data.db): ").strip()
-    if not db_file:
-        db_file = "~/.bitwiseai/milvus_data.db"
-    
-    collection_name = input("集合名称 (默认: bitwiseai_specs): ").strip()
-    if not collection_name:
-        collection_name = "bitwiseai_specs"
-    
-    embedding_dim = input("Embedding 维度 (默认: 4096): ").strip()
-    if not embedding_dim:
-        embedding_dim = 4096
-    else:
-        try:
-            embedding_dim = int(embedding_dim)
-        except ValueError:
-            embedding_dim = 4096
-    
-    similarity_threshold = input("相似度阈值 (默认: 0.85): ").strip()
-    if not similarity_threshold:
-        similarity_threshold = 0.85
-    else:
-        try:
-            similarity_threshold = float(similarity_threshold)
-        except ValueError:
-            similarity_threshold = 0.85
-    
-    config["vector_db"] = {
-        "db_file": db_file,
-        "collection_name": collection_name,
-        "embedding_dim": embedding_dim,
-        "similarity_threshold": similarity_threshold,
-        "save_chunks": False,
-        "chunks_dir": "~/.bitwiseai/chunks"
-    }
-    print()
-    
-    # 系统提示词
-    print("系统配置:")
-    print("-" * 40)
-    system_prompt = input("系统提示词 (默认: 使用内置提示词，直接回车跳过): ").strip()
-    if system_prompt:
-        config["system_prompt"] = system_prompt
-    else:
-        # 使用默认提示词
-        config["system_prompt"] = "你是 BitwiseAI，专注于硬件指令验证和调试日志分析的 AI 助手。你可以帮助用户：\n1. 解析和分析硬件调试日志\n2. 验证指令计算的正确性\n3. 发现潜在的问题和异常\n4. 提供基于规范文档的专业建议"
-    
-    # 保存配置文件
-    try:
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-        
-        print()
-        print("=" * 60)
-        print(f"✓ 配置文件已生成: {config_path}")
-        print("=" * 60)
-    except Exception as e:
-        print(f"错误: 无法保存配置文件: {str(e)}", file=sys.stderr)
-        sys.exit(1)
+
+    with open(config_path, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+
+    print(f"✅ 配置文件已生成: {config_path}")
+    print(f"\n请编辑配置文件，设置以下参数：")
+    print(f"  llm.api_key - LLM API 密钥")
+    print(f"  llm.base_url - LLM API 地址")
+    print(f"  llm.model - 模型名称")
+    print(f"\n配置示例：")
+    print(f"  GLM-4:")
+    print(f"    model: glm-4-flash")
+    print(f"    base_url: https://open.bigmodel.cn/api/paas/v4")
+    print(f"  MiniMax:")
+    print(f"    model: MiniMax-M2.1")
+    print(f"    base_url: https://api.minimaxi.com/v1")
+
+
+# ============================================================================
+# 主函数
+# ============================================================================
 
 
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(
         prog="bitwiseai",
-        description="BitwiseAI - 硬件调试和日志分析的 AI 工具",
+        description="BitwiseAI - AI 驱动的硬件调试和日志分析工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
   # 对话模式
-  bitwiseai --chat "什么是 MUL 指令？"
-  bitwiseai --chat  # 交互模式
-  
-  # 分析 PE 指令日志
-  bitwiseai --analyze --log pe_registers.log --type pe_instruction
-  
-  # 使用 LLM 分析日志
-  bitwiseai --analyze --log debug.log --type custom --query "找出所有错误"
-  
-  # 查询规范文档
-  bitwiseai --query-spec --spec ./docs/ --query "MUL 指令参数"
-  
-  # Skill 和工具管理
-  bitwiseai --tool --list-skills
-  bitwiseai --tool --load-skill asm_parser
-  bitwiseai --tool --list-tools
-  bitwiseai --tool --invoke parse_asm_instruction 0x0003000000000181
-        """
+  bitwiseai chat "什么是 MUL 指令？"
+  bitwiseai chat  # 交互模式，支持 /skill-name 语法
+
+  # Agent 模式（自动执行任务）
+  bitwiseai agent "分析代码并生成报告"
+
+  # Skill 管理
+  bitwiseai skill --list
+  bitwiseai skill --load asm-parser
+  bitwiseai skill --search "代码分析"
+
+  # 会话管理
+  bitwiseai session --list
+  bitwiseai session --new "项目讨论"
+  bitwiseai session --switch <session-id>
+
+  # 生成配置文件
+  bitwiseai config --force
+        """,
     )
-    
+
     # 全局参数
     parser.add_argument(
         "--config",
         default="~/.bitwiseai/config.json",
-        help="配置文件路径 (默认: ~/.bitwiseai/config.json)"
+        help="配置文件路径 (默认: ~/.bitwiseai/config.json)",
     )
     parser.add_argument(
         "--version",
         action="version",
-        version="BitwiseAI 2.0.0"
+        version="BitwiseAI 2.1.0",
     )
-    
+
     # 子命令
     subparsers = parser.add_subparsers(dest="mode", help="操作模式")
-    
+
     # 对话模式
     chat_parser = subparsers.add_parser("chat", help="对话模式")
-    chat_parser.add_argument(
-        "query",
-        nargs="?",
-        help="查询内容（不提供则进入交互模式）"
-    )
-    chat_parser.add_argument(
-        "--use-rag",
-        action="store_true",
-        help="使用 RAG 查询规范文档"
-    )
-    
-    # 分析模式
-    analyze_parser = subparsers.add_parser("analyze", help="日志分析模式")
-    analyze_parser.add_argument(
-        "--log",
-        dest="log_file",
-        required=True,
-        help="日志文件路径"
-    )
-    analyze_parser.add_argument(
-        "--type",
-        choices=["custom"],
-        default="custom",
-        help="分析类型（目前仅支持 custom，用户需要实现自己的任务）"
-    )
-    analyze_parser.add_argument(
-        "--spec",
-        help="规范文档路径（用于 RAG）"
-    )
-    analyze_parser.add_argument(
-        "--query",
-        help="分析查询（用于 custom 类型）"
-    )
-    analyze_parser.add_argument(
-        "--output",
-        help="报告输出路径"
-    )
-    analyze_parser.add_argument(
-        "--format",
-        choices=["text", "markdown", "json"],
-        default="markdown",
-        help="报告格式"
-    )
-    analyze_parser.add_argument(
-        "--show-details",
-        action="store_true",
-        help="显示详细结果"
-    )
-    
-    # 查询规范模式
-    spec_parser = subparsers.add_parser("query-spec", help="查询规范文档")
-    spec_parser.add_argument(
-        "--spec",
-        required=True,
-        help="规范文档路径"
-    )
-    spec_parser.add_argument(
-        "--query",
-        required=True,
-        help="查询内容"
-    )
-    spec_parser.add_argument(
-        "--top-k",
-        type=int,
-        default=5,
-        help="返回结果数量"
-    )
-    spec_parser.add_argument(
-        "--use-llm",
-        action="store_true",
-        help="使用 LLM 生成回答"
-    )
-    
-    # Skill 和工具模式
-    tool_parser = subparsers.add_parser("tool", help="Skill 和工具管理")
-    tool_parser.add_argument(
-        "--list-skills",
-        action="store_true",
-        help="列出所有 Skills"
-    )
-    tool_parser.add_argument(
-        "--loaded-only",
-        action="store_true",
-        help="仅显示已加载的 Skills（与 --list-skills 一起使用）"
-    )
-    tool_parser.add_argument(
-        "--load-skill",
-        help="加载指定的 Skill"
-    )
-    tool_parser.add_argument(
-        "--unload-skill",
-        help="卸载指定的 Skill"
-    )
-    tool_parser.add_argument(
-        "--list-tools",
-        action="store_true",
-        help="列出所有工具（来自已加载的 Skills）"
-    )
-    tool_parser.add_argument(
-        "--invoke",
-        help="调用工具"
-    )
-    tool_parser.add_argument(
-        "--args",
-        nargs="*",
-        help="工具参数"
-    )
-    tool_parser.add_argument(
-        "--add-dir",
-        help="添加外部技能目录"
-    )
-    tool_parser.add_argument(
-        "--search",
-        help="搜索技能（使用向量检索）"
-    )
-    tool_parser.add_argument(
-        "--top-k",
-        type=int,
-        default=5,
-        help="搜索返回结果数量（与 --search 一起使用）"
-    )
-    
-    # 兼容旧的命令行格式（直接使用 --chat）
-    parser.add_argument(
-        "--chat",
-        dest="direct_chat",
-        nargs="?",
-        const="",
-        help="对话模式（快捷方式）"
-    )
-    parser.add_argument(
-        "--analyze",
-        action="store_true",
-        help="分析模式（快捷方式）"
-    )
-    parser.add_argument(
-        "--log",
-        dest="direct_log_file",
-        help="日志文件（快捷方式）"
-    )
-    parser.add_argument(
-        "--query-spec",
-        action="store_true",
-        help="查询规范模式（快捷方式）"
-    )
-    parser.add_argument(
-        "--tool",
-        action="store_true",
-        help="工具模式（快捷方式）"
-    )
-    parser.add_argument(
-        "--generate-config",
-        action="store_true",
-        help="交互式生成配置文件"
-    )
-    
+    chat_parser.add_argument("query", nargs="?", help="查询内容（不提供则进入交互模式）")
+    chat_parser.add_argument("--use-rag", action="store_true", help="使用 RAG 查询文档")
+
+    # Agent 模式
+    agent_parser = subparsers.add_parser("agent", help="Agent 模式（自动执行任务）")
+    agent_parser.add_argument("query", help="任务描述")
+    agent_parser.add_argument("--stream", action="store_true", help="流式输出")
+    agent_parser.add_argument("--use-rag", action="store_true", help="使用 RAG")
+
+    # Skill 管理模式
+    skill_parser = subparsers.add_parser("skill", help="Skill 管理")
+    skill_parser.add_argument("--list", action="store_true", help="列出所有 Skills")
+    skill_parser.add_argument("--loaded-only", action="store_true", help="仅显示已加载的")
+    skill_parser.add_argument("--verbose", action="store_true", help="显示详细信息")
+    skill_parser.add_argument("--load", help="加载指定的 Skill")
+    skill_parser.add_argument("--unload", help="卸载指定的 Skill")
+    skill_parser.add_argument("--search", help="搜索 Skills")
+    skill_parser.add_argument("--top-k", type=int, default=5, help="搜索返回数量")
+    skill_parser.add_argument("--add-dir", help="添加外部技能目录")
+
+    # 会话管理模式
+    session_parser = subparsers.add_parser("session", help="会话管理")
+    session_parser.add_argument("--list", action="store_true", help="列出所有会话")
+    session_parser.add_argument("--new", help="创建新会话（指定名称）")
+    session_parser.add_argument("--switch", help="切换到指定会话")
+    session_parser.add_argument("--delete", help="删除指定会话")
+
+    # 配置生成模式
+    config_parser = subparsers.add_parser("config", help="生成配置文件")
+    config_parser.add_argument("--force", action="store_true", help="覆盖现有配置")
+
     args = parser.parse_args()
-    
-    # 处理生成配置命令（优先级最高）
-    if args.generate_config:
-        generate_config_mode(args)
-        sys.exit(0)
-    
-    # 处理快捷方式
-    if args.direct_chat is not None:
-        args.mode = "chat"
-        args.query = args.direct_chat if args.direct_chat else None
-        args.use_rag = False
-    elif args.analyze:
-        args.mode = "analyze"
-        args.log_file = args.direct_log_file
-        args.type = "custom"
-        args.spec = None
-        args.query = None
-        args.output = None
-        args.format = "markdown"
-        args.show_details = False
-    elif args.query_spec:
-        args.mode = "query-spec"
-    elif args.tool:
-        args.mode = "tool"
-    
+
     # 执行对应模式
     if args.mode == "chat":
         chat_mode(args)
-    elif args.mode == "analyze":
-        analyze_mode(args)
-    elif args.mode == "query-spec":
-        query_spec_mode(args)
-    elif args.mode == "tool":
-        tool_mode(args)
+    elif args.mode == "agent":
+        agent_mode(args)
+    elif args.mode == "skill":
+        skill_mode(args)
+    elif args.mode == "session":
+        session_mode(args)
+    elif args.mode == "config":
+        config_mode(args)
     else:
         parser.print_help()
         sys.exit(0)

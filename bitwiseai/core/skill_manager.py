@@ -313,7 +313,8 @@ class SkillManager:
                 break
         
         if not tools_path:
-            print(f"⚠️  Skill {skill.name} 的工具文件不存在（查找了 scripts/tools.py 和 tools.py）")
+            # 某些技能可能没有工具文件，而是通过 SKILL.md 的内容来指导 AI 执行任务
+            # 这是正常的，不需要警告
             return
         
         try:

@@ -10,20 +10,42 @@
   "embedding": {
     "api_key": "your-embedding-api-key",
     "base_url": "https://your-embedding-api-endpoint/v1",
-    "model": "Qwen/Qwen3-Embedding-8B"
+    "model": "text-embedding-3-small"
   },
-  "vector_db": {
-    "db_file": "~/.bitwiseai/milvus_data.db",
-    "collection_name": "bitwiseai_specs",
-    "embedding_dim": 4096,
+  "memory": {
+    "enabled": true,
+    "workspace_dir": "~/.bitwiseai",
+    "db_path": "~/.bitwiseai/memory.db",
+    "vector_enabled": true,
+    "chunking": {
+      "tokens": 400,
+      "overlap": 80
+    },
+    "hybrid_search": {
+      "enabled": true,
+      "vector_weight": 0.7,
+      "text_weight": 0.3,
+      "min_score": 0.5
+    },
+    "embedding_cache": {
+      "enabled": true,
+      "max_entries": 10000
+    },
+    "sync": {
+      "watch": true,
+      "watch_debounce_ms": 1000,
+      "on_search": true
+    },
+    "short_term": {
+      "enabled": true,
+      "retention_days": 7,
+      "compaction_strategy": "summarize"
+    }
+  },
+  "rag": {
     "similarity_threshold": 0.85,
     "save_chunks": false,
     "chunks_dir": "~/.bitwiseai/chunks",
-    "retrieval_strategy": "hybrid",
-    "hybrid_search_weights": {
-      "vector": 0.7,
-      "keyword": 0.3
-    },
     "enable_document_name_matching": true,
     "document_name_match_threshold": 0.3
   },
@@ -33,8 +55,7 @@
       "~/.bitwiseai/skills"
     ],
     "auto_load": ["asm-parser", "hex-converter"],
-    "index_to_vector_db": true,
-    "skill_collection_name": "bitwiseai_skills"
+    "index_to_memory": true
   },
   "tools": []
 }
