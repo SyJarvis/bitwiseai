@@ -9,7 +9,10 @@
 3. [对话模式](#对话模式)
 4. [Skill 管理](#skill-管理)
 5. [交互模式中的 Slash 命令](#交互模式中的-slash-命令)
-6. [完整示例](#完整示例)
+6. [对话归档](#对话归档)
+7. [Agent 模式](#agent-模式)
+8. [会话管理](#会话管理)
+9. [完整示例](#完整示例)
 
 ## 快速开始
 
@@ -192,16 +195,17 @@ $ bitwiseai chat
 ============================================================
 BitwiseAI 对话模式
 命令:
-  /help           - 显示帮助
-  /clear          - 清空上下文
-  /sessions       - 列出所有会话
-  /new <name>     - 创建新会话
-  /switch <id>    - 切换会话
-  /skills         - 列出所有 Skills
-  /load <skill>   - 加载 Skill
-  /unload <skill> - 卸载 Skill
-  /agent          - 使用 Agent 模式
-  /quit 或 exit   - 退出
+  /help                    - 显示帮助
+  /clear                   - 清空上下文
+  /archive [标题]          - 归档当前对话到长期记忆
+  /sessions                - 列出所有会话
+  /new <name>              - 创建新会话
+  /switch <id>             - 切换会话
+  /skills                  - 列出所有 Skills
+  /load <skill>            - 加载 Skill
+  /unload <skill>          - 卸载 Skill
+  /agent                   - 使用 Agent 模式
+  /quit 或 exit            - 退出
 ============================================================
 
 你: /skills
@@ -224,6 +228,39 @@ AI: 0xFF 的十进制值是 255
 你: /quit
 再见！
 ```
+
+### 对话归档
+
+使用 `/archive` 命令将当前对话历史归档到长期记忆：
+
+```bash
+# 自动归档（自动生成标题）
+你: /archive
+✓ 对话已归档到长期记忆
+  标题: PyTorch量化问题解决
+  消息数: 12
+  存储位置: ~/.bitwiseai/MEMORY.md
+
+# 指定标题归档
+你: /archive PyTorch量化问题解决方案
+✓ 对话已归档到长期记忆
+  标题: PyTorch量化问题解决方案
+  消息数: 12
+  存储位置: ~/.bitwiseai/MEMORY.md
+```
+
+归档功能说明：
+- 自动总结对话内容（保持原意，不篡改）
+- 存储到长期记忆（`~/.bitwiseai/MEMORY.md`）
+- 在短期记忆中添加归档标记
+- 清空当前 CLI 对话历史
+- 归档后可在 MEMORY.md 中查看完整记录
+
+适用场景：
+- 保存重要的技术讨论和解决方案
+- 归档决策过程供后续参考
+- 记录调试过程和最终解决方法
+- 定期整理对话历史，保持上下文清晰
 
 ## Agent 模式
 

@@ -21,6 +21,14 @@ load_dotenv()
 
 from .bitwiseai import BitwiseAI
 
+# 全局当前会话（供 skills 使用）
+_current_chat_session: Optional["ChatSession"] = None
+
+
+def get_current_chat_session() -> Optional["ChatSession"]:
+    """获取当前活跃的聊天会话（供 skills 使用）"""
+    return _current_chat_session
+
 
 # 尝试导入 prompt_toolkit，如果不可用则使用简单模式
 try:
@@ -96,6 +104,7 @@ def _print_welcome():
     print("命令:")
     print("  /help           - 显示帮助")
     print("  /clear          - 清空上下文")
+    print("  /archive [标题] - 归档当前对话到长期记忆")
     print("  /sessions       - 列出所有会话")
     print("  /new <name>     - 创建新会话")
     print("  /switch <id>    - 切换会话")
@@ -113,24 +122,27 @@ def _show_help() -> str:
     """显示帮助信息"""
     return """
 可用命令:
-  /help           - 显示此帮助信息
-  /clear          - 清空对话历史
-  /sessions       - 列出所有会话
-  /skills         - 列出所有 Skills
-  /load <skill>   - 加载指定的 Skill
-  /unload <skill> - 卸载指定的 Skill
-  /skill-name     - 直接使用技能 (自动加载并使用技能上下文)
-  /agent [query]  - 使用 Agent 模式执行任务
-  /bye, /quit     - 退出对话 (也支持 Ctrl+C)
+  /help                    - 显示此帮助信息
+  /clear                   - 清空对话历史
+  /archive [标题]          - 归档当前对话到长期记忆
+  /sessions                - 列出所有会话
+  /skills                  - 列出所有 Skills
+  /load <skill>            - 加载指定的 Skill
+  /unload <skill>          - 卸载指定的 Skill
+  /skill-name              - 直接使用技能 (自动加载并使用技能上下文)
+  /agent [query]           - 使用 Agent 模式执行任务
+  /bye, /quit              - 退出对话 (也支持 Ctrl+C)
 
 使用示例:
-  /load asm-parser         # 加载汇编解析器技能
-  /asm-parser 解析这段代码  # 直接使用技能 (自动加载)
-  /agent 分析这段代码      # 使用 Agent 模式分析
+  /load asm-parser                # 加载汇编解析器技能
+  /asm-parser 解析这段代码         # 直接使用技能 (自动加载)
+  /agent 分析这段代码             # 使用 Agent 模式分析
+  /archive PyTorch量化问题解决    # 归档当前对话
 
 输入技巧:
   - 直接输入文字即可开始对话
   - 使用 /skill-name <内容> 快速调用技能
+  - 使用 /archive 保存重要对话到长期记忆
   - 按 Ctrl+C 或输入 /bye 退出
 """
 
@@ -148,6 +160,21 @@ def _handle_slash_command(session: ChatSession, command: str) -> Optional[str]:
     # 退出命令
     if cmd in ['bye', 'quit', 'exit']:
         return None
+
+    # 归档命令
+    if cmd == 'archive':
+        # 通过 skill 系统调用 memory-archiver
+        if 'memory-archiver' not in session.ai.skill_manager.list_loaded_skills():
+            session.ai.load_skill('memory-archiver')
+
+        # 从 skill 加载工具函数
+        skill = session.ai.skill_manager.get_skill('memory-archiver')
+        if skill and skill.loaded and 'archive_current_conversation' in skill.tools:
+            tool_func = skill.tools['archive_current_conversation']['function']
+            title = args.strip() if args else ""
+            return tool_func(summary_title=title)
+        else:
+            return "错误：无法加载 memory-archiver skill"
 
     # 检查是否是技能名称
     available_skills = session.ai.list_skills()
@@ -252,17 +279,20 @@ def _agent_mode(ai, query: str) -> str:
 
 def _interactive_mode_prompt_toolkit(ai: BitwiseAI, args):
     """使用 prompt_toolkit 的交互模式"""
+    global _current_chat_session
+
     from prompt_toolkit import PromptSession
     from prompt_toolkit.history import InMemoryHistory
     from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
     from prompt_toolkit.completion import WordCompleter
 
     session = ChatSession(ai, args.use_rag)
+    _current_chat_session = session
     prompt_session = PromptSession(history=InMemoryHistory())
     auto_suggest = AutoSuggestFromHistory()
 
     # 创建命令补全
-    commands = ['/help', '/clear', '/skills', '/load', '/unload', '/agent', '/bye', '/quit']
+    commands = ['/help', '/clear', '/archive', '/skills', '/load', '/unload', '/agent', '/bye', '/quit']
     skills = ai.list_skills()
     skill_commands = [f'/{s}' for s in skills]
     all_completions = commands + skill_commands
@@ -316,10 +346,16 @@ def _interactive_mode_prompt_toolkit(ai: BitwiseAI, args):
         except Exception as e:
             print(f"错误: {str(e)}")
 
+    # 清理全局会话
+    _current_chat_session = None
+
 
 def _interactive_mode_simple(ai: BitwiseAI, args):
     """简单的交互模式（不依赖 prompt_toolkit）"""
+    global _current_chat_session
+
     session = ChatSession(ai, args.use_rag)
+    _current_chat_session = session
 
     _print_welcome()
 
@@ -360,6 +396,9 @@ def _interactive_mode_simple(ai: BitwiseAI, args):
             break
         except Exception as e:
             print(f"错误: {str(e)}")
+
+    # 清理全局会话
+    _current_chat_session = None
 
 
 def _get_user_input_simple() -> str:

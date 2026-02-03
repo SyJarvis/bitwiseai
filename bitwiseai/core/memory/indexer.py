@@ -218,15 +218,31 @@ class MemoryIndexer:
         if texts_to_embed:
             # Embed texts (synchronous)
             try:
-                loop = asyncio.get_event_loop()
-                new_embeddings = loop.run_until_complete(
-                    self.embedding.embed_batch(texts_to_embed)
-                )
-            except RuntimeError:
-                # No event loop, create one
+                # First try: use asyncio.run() which creates a new event loop
                 new_embeddings = asyncio.run(
                     self.embedding.embed_batch(texts_to_embed)
                 )
+            except RuntimeError as e:
+                # Last resort: create a new thread with its own event loop
+                import threading
+                result = [None]
+                exception = [None]
+                
+                def run_embed():
+                    try:
+                        result[0] = asyncio.run(
+                            self.embedding.embed_batch(texts_to_embed)
+                        )
+                    except Exception as e:
+                        exception[0] = e
+                
+                thread = threading.Thread(target=run_embed)
+                thread.start()
+                thread.join()
+                
+                if exception[0]:
+                    raise exception[0]
+                new_embeddings = result[0]
 
             # Cache new embeddings
             for idx, text_idx in enumerate(text_indices):

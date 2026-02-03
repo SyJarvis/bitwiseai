@@ -617,7 +617,7 @@ print(stats)
 
 - [使用指南](USAGE_GUIDE.md) - BitwiseAI 基本使用
 - [架构文档](ARCHITECTURE.md) - 系统架构说明
-- [CLI 指南](CLI_GUIDE.md) - 命令行工具使用
+- [CLI 使用指南](CLI_USAGE_GUIDE.md) - 命令行工具使用
 
 ## 技术支持
 
