@@ -2,31 +2,31 @@
 
 <div align="center">
 
-**硬件调试和日志分析的 AI 工具**
+**AI 驱动的智能助手，支持记忆系统、Skill 扩展和 RAG 检索**
 
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/Version-0.1.3-orange.svg)](bitwiseai/__init__.py)
 
 </div>
 
-BitwiseAI 是一个专注于硬件指令验证和调试日志分析的 AI 工具库。它提供了灵活的接口，让用户可以轻松地将 AI 能力嵌入到自己的调试工作流中。
+BitwiseAI 是一个可扩展的 AI 助手框架，专注于提供智能对话、记忆管理、文档检索和 Skill 扩展能力。支持双层记忆系统（短期/长期）、向量检索增强生成（RAG）、以及灵活的 Skill 系统。
 
 ## ✨ 核心特性
 
-- 🎯 **可嵌入式设计**: 提供清晰的接口，让用户在自己的项目中定义解析器、验证器和任务
-- 🧠 **AI 辅助分析**: 基于 LangChain，支持 LLM 和 RAG 技术进行智能分析
-- 🔧 **灵活的工具系统**: 支持注册 Python 函数、Shell 命令和 LangChain Tools
-- 📊 **任务编排**: 定义和执行复杂的日志分析任务
-- 📝 **自动报告生成**: 支持 Markdown、JSON 等多种格式的分析报告
+### 基础能力
+- 🧠 **AI 对话**: 支持多种 LLM 提供商（OpenAI、智谱、MiniMax 等）
+- 💾 **双层记忆系统**: 短期记忆（自动清理）+ 长期记忆（持久化存储）
+- 📚 **文档管理**: 支持 Markdown、TXT、PDF 文档加载和检索
+- 🔧 **Skill 系统**: 模块化扩展，支持自定义工具集成
+- 🔍 **RAG 检索**: 基于向量相似度的混合搜索（语义 + 关键词）
 
-## 🎨 设计理念
-
-BitwiseAI **不是**一个提供现成解决方案的工具，而是一个**可扩展的框架**：
-
-- ✅ 你定义如何解析日志（实现 `LogParserInterface`）
-- ✅ 你定义如何验证数据（实现 `VerifierInterface`）
-- ✅ 你定义分析任务流程（继承 `AnalysisTask`）
-- ✅ BitwiseAI 提供 LLM、RAG、工具管理等基础能力
+### 高级功能
+- 🤖 **Agent 模式**: 自动执行复杂任务链
+- 💬 **多会话管理**: 独立会话上下文，支持快速切换
+- 🌊 **流式输出**: 实时流式对话体验
+- 📦 **对话归档**: 一键归档重要对话到长期记忆
+- 🎯 **Slash 命令**: 内置命令系统，快速执行常用操作
 
 ## 📦 安装
 
@@ -37,57 +37,52 @@ cd BitwiseAI
 
 # 安装
 pip install -e .
-
-# 或使用安装脚本
-bash install.sh
 ```
 
 ## 🚀 快速开始
 
-### 第一步：安装
+### 第一步：配置
+
+使用 CLI 生成配置文件：
 
 ```bash
-# 克隆仓库
-git clone https://github.com/SyJarvis/BitwiseAI.git
-cd BitwiseAI
-
-# 安装
-pip install -e .
+bitwiseai config --force
 ```
 
-### 第二步：配置
+然后编辑 `~/.bitwiseai/config.json` 添加 API 密钥。
 
-首次使用需要生成配置文件：
+或使用环境变量：
 
 ```bash
-# 交互式生成配置文件
-bitwiseai --generate-config
+export LLM_API_KEY="sk-xxx"
+export LLM_BASE_URL="https://api.openai.com/v1"
+export LLM_MODEL="gpt-4o-mini"
+
+export EMBEDDING_API_KEY="sk-xxx"
+export EMBEDDING_BASE_URL="https://api.openai.com/v1"
+export EMBEDDING_MODEL="text-embedding-3-small"
 ```
 
-这会引导你输入以下信息：
-- **LLM API Key** 和 **Base URL**（如 OpenAI、MiniMax 等）
-- **Embedding API Key** 和 **Base URL**
-- **模型名称**和参数
-- **向量数据库**配置
-- **系统提示词**（可选）
-
-配置文件保存在 `~/.bitwiseai/config.json`
-
-> 💡 **提示**：也可以使用 `.env` 文件配置 API 密钥，详见下方说明。
-
-### 第三步：开始使用
+### 第二步：开始使用
 
 #### 方式 1: 命令行工具（推荐）
 
 ```bash
-# 单次对话
-bitwiseai chat "什么是 MUL 指令？"
+# 基础对话
+bitwiseai chat "你好"
 
 # 交互式对话
 bitwiseai chat
 
-# 查看帮助
-bitwiseai --help
+# Agent 模式
+bitwiseai agent "分析这段代码"
+
+# Skill 管理
+bitwiseai skill --list
+bitwiseai skill --load asm-parser
+
+# 会话管理
+bitwiseai session --list
 ```
 
 #### 方式 2: Python 代码
@@ -99,363 +94,417 @@ from bitwiseai import BitwiseAI
 ai = BitwiseAI()
 
 # 基础对话
-response = ai.chat("什么是 MUL 指令？")
+response = ai.chat("你好")
 print(response)
 
-# 加载规范文档到知识库（可选）
-ai.load_specification("./docs/hardware_spec.pdf")
-
-# 使用 RAG 模式对话
-response = ai.chat("MUL 指令的参数有哪些？", use_rag=True)
-print(response)
+# 流式对话
+for token in ai.chat_stream("介绍一下你自己"):
+    print(token, end="", flush=True)
 ```
 
-## 📋 工作流程
+## 🆕 v0.1.3 新功能详解
 
-BitwiseAI 的典型工作流程如下：
+### 1. 双层记忆系统
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  1. 安装和配置                                            │
-│     - 安装 BitwiseAI                                    │
-│     - 运行 bitwiseai --generate-config 配置 API         │
-└─────────────────────────────────────────────────────────┘
-                        ↓
-┌─────────────────────────────────────────────────────────┐
-│  2. 准备数据（可选）                                       │
-│     - 加载规范文档到向量数据库（RAG）                      │
-│     - 准备日志文件（如果需要分析）                         │
-└─────────────────────────────────────────────────────────┘
-                        ↓
-┌─────────────────────────────────────────────────────────┐
-│  3. 实现业务逻辑（在你的项目中）                           │
-│     - 实现 LogParserInterface（解析日志）                 │
-│     - 实现 VerifierInterface（验证数据）                  │
-│     - 创建 AnalysisTask（定义分析任务）                   │
-│     - 开发 Skills（扩展工具能力）                         │
-└─────────────────────────────────────────────────────────┘
-                        ↓
-┌─────────────────────────────────────────────────────────┐
-│  4. 使用 BitwiseAI                                       │
-│     - 初始化 BitwiseAI                                   │
-│     - 注册任务和工具                                      │
-│     - 执行分析或对话                                      │
-│     - 生成报告                                           │
-└─────────────────────────────────────────────────────────┘
-```
-
-### 详细工作流程示例
-
-#### 场景 1: 基础对话和 RAG 查询
+BitwiseAI 提供强大的记忆管理能力：
 
 ```python
 from bitwiseai import BitwiseAI
 
-# 1. 初始化
 ai = BitwiseAI()
 
-# 2. 加载规范文档（可选）
-ai.load_documents("./docs/hardware_spec/")
+# 搜索记忆
+results = ai.remember("之前讨论的量化方案")
+for r in results:
+    print(f"[{r['source']}] {r['content'][:100]}...")
 
-# 3. 使用 RAG 模式对话
-response = ai.chat("MUL 指令的参数有哪些？", use_rag=True)
-print(response)
+# 添加到长期记忆
+ai.memorize("重要决策：使用 PyTorch 2.0 进行模型量化", category="决策")
+
+# 查看记忆统计
+stats = ai.get_memory_stats()
+print(f"长期记忆条目: {stats['long_term_count']}")
 ```
 
-#### 场景 2: 自定义分析任务
+### 2. 文档加载与检索
+
+支持加载文件夹或单个文档：
 
 ```python
-from bitwiseai import BitwiseAI
-from bitwiseai.interfaces import AnalysisTask, AnalysisResult
+# 加载文件夹中的所有文档
+result = ai.load_documents("~/docs/")
+print(f"已加载 {result['inserted']} 个文档片段")
 
-# 1. 定义自定义任务
-class MyLogAnalysisTask(AnalysisTask):
-    def analyze(self, context, parsed_data):
-        # 实现你的分析逻辑
-        results = []
-        # ... 分析代码 ...
-        return results
+# 加载单个文档
+result = ai.load_document("~/notes/meeting.md")
+print(f"文档已索引: {result['file_path']}")
 
-# 2. 使用任务
-ai = BitwiseAI()
-ai.load_log_file("test.log")
-ai.register_task(MyLogAnalysisTask())
-results = ai.execute_all_tasks()
-
-# 3. 生成报告
-ai.save_report("report.md")
+# 添加文本片段
+ai.add_text("这是需要记住的重要内容", source="用户笔记")
 ```
 
-#### 场景 3: 使用 Skills 扩展功能
+### 3. 对话归档
 
-```python
-from bitwiseai import BitwiseAI
-
-# 1. 初始化
-ai = BitwiseAI()
-
-# 2. 查看可用 Skills
-skills = ai.list_skills()
-print(f"可用 Skills: {skills}")
-
-# 3. 加载 Skill（如果已创建）
-ai.load_skill("my_custom_skill")
-
-# 4. 在对话中使用工具
-response = ai.chat("使用 my_tool 处理数据", use_tools=True)
-print(response)
-```
-
-### 使用 .env 文件配置（可选）
-
-除了交互式配置，你也可以使用 `.env` 文件：
+在 CLI 中归档重要对话：
 
 ```bash
-# .env 文件
-LLM_API_KEY=your-api-key
-LLM_BASE_URL=https://your-api-endpoint/v1
+$ bitwiseai chat
 
-EMBEDDING_API_KEY=your-api-key
-EMBEDDING_BASE_URL=https://your-api-endpoint/v1
+你: /archive PyTorch量化讨论
+✓ 对话已归档到长期记忆
+  标题: PyTorch量化讨论
+  消息数: 15
+  存储位置: ~/.bitwiseai/MEMORY.md
 ```
 
-BitwiseAI 会自动读取 `.env` 文件中的配置。
+### 4. Skill 系统
 
+BitwiseAI 支持通过 Skill 扩展功能：
+
+```bash
+# 列出可用 Skills
+bitwiseai skill --list
+
+# 加载 Skill
+bitwiseai skill --load asm-parser
+
+# 使用 Skill（在交互模式中）
+你: /asm-parser 解析 0x1234567890abcdef
+```
+
+内置 Skills：
+- `asm-parser`: 汇编指令解析
+- `error-analyzer`: 误差分析工具
+- `memory-archiver`: 对话归档（自动加载）
+- `hex-converter`: 进制转换工具
+
+### 5. Agent 模式
+
+自动执行复杂任务：
+
+```bash
+# 使用 Agent
+bitwiseai agent "分析项目代码，找出潜在问题"
+
+# 流式输出
+bitwiseai agent "生成项目文档" --stream
+```
 
 ## 📚 使用示例
 
-更多详细示例请查看 `examples/` 目录：
+### 完整工作流示例
 
-- **[基础使用示例](examples/basic_usage.py)** - 初始化、对话、工具调用
-- **[RAG 使用示例](examples/rag_usage.py)** - 文档加载、检索、RAG 对话
-- **[自定义 Skill 示例](examples/custom_skill_example.py)** - 创建和使用自定义 Skills
-- **[文档导出示例](examples/document_export.py)** - 导出向量数据库中的文档
+```python
+import asyncio
+from bitwiseai import BitwiseAI
 
-### 示例 1: RAG 规范查询
+async def complete_workflow():
+    # 1. 初始化
+    ai = BitwiseAI()
+
+    # 2. 加载 Skills
+    ai.load_skill("asm-parser")
+    ai.load_skill("error-analyzer")
+
+    # 3. 加载文档到知识库
+    ai.load_documents("~/project-docs/")
+
+    # 4. 对话并检索相关知识
+    response = ai.chat(
+        "解释 MUL 指令的用法",
+        use_rag=True  # 使用知识库
+    )
+    print(response)
+
+    # 5. 保存重要信息到长期记忆
+    ai.memorize("MUL 指令用于乘法运算，格式为 MUL Rd, Rn, Rm")
+
+asyncio.run(complete_workflow())
+```
+
+### 记忆系统示例
 
 ```python
 from bitwiseai import BitwiseAI
 
 ai = BitwiseAI()
 
-# 加载硬件规范文档
-ai.load_documents("./docs/hardware_manual/")
+# 短期记忆（7天自动清理）会自动记录对话
 
-# 查询规范
-context = ai.query_specification("MUL 指令的 func_sel 参数含义", top_k=5)
-print(context)
+# 主动添加到长期记忆
+ai.memorize(
+    "项目架构决策：使用微服务架构",
+    category="架构",
+    tags=["决策", "架构", "微服务"]
+)
 
-# 使用 RAG 模式对话
-response = ai.chat("如何验证 SHIFT 指令？", use_rag=True)
-print(response)
+# 搜索记忆
+results = ai.remember("微服务架构", max_results=5)
+for r in results:
+    print(f"来源: {r['source']}, 相关度: {r['score']:.2f}")
 ```
 
-### 示例 2: 自定义分析任务
-
-```python
-from bitwiseai import BitwiseAI
-from bitwiseai.interfaces import AnalysisTask, AnalysisResult
-
-class MyLogAnalysisTask(AnalysisTask):
-    """自定义日志分析任务"""
-    
-    def analyze(self, context, parsed_data):
-        """实现你的分析逻辑"""
-        results = []
-        
-        # 读取日志
-        if context.log_file_path:
-            with open(context.log_file_path, 'r') as f:
-                log_content = f.read()
-            
-            # 执行分析
-            error_count = log_content.count("ERROR")
-            
-            # 返回结果
-            results.append(AnalysisResult(
-                status="pass" if error_count == 0 else "fail",
-                message=f"发现 {error_count} 个错误",
-                data={"error_count": error_count}
-            ))
-        
-        return results
-
-# 使用任务
-ai = BitwiseAI()
-ai.load_log_file("test.log")
-ai.register_task(MyLogAnalysisTask())
-results = ai.execute_all_tasks()
-
-# 生成报告
-ai.save_report("report.md", format="markdown")
-```
-
-### 示例 3: 使用 Skills 扩展功能
-
-```python
-from bitwiseai import BitwiseAI
-
-ai = BitwiseAI()
-
-# 查看可用 Skills
-skills = ai.list_skills()
-print(f"可用 Skills: {skills}")
-
-# 加载 Skill
-ai.load_skill("hex_converter")
-
-# 在对话中使用工具（自动调用）
-response = ai.chat("将十六进制 0xFF 转换为十进制", use_tools=True)
-print(response)
-```
+更多示例请查看：
+- **[docs/CLI_USAGE_GUIDE.md](docs/CLI_USAGE_GUIDE.md)** - CLI 完整使用指南
+- **[docs/MEMORY_SYSTEM_DESIGN.md](docs/MEMORY_SYSTEM_DESIGN.md)** - 记忆系统设计文档
+- **[docs/SKILLS_GUIDE.md](docs/SKILLS_GUIDE.md)** - Skill 开发指南
 
 ## 🏗️ 架构设计
 
 ```
-┌─────────────────────────────────────────────────┐
-│                   你的项目                        │
-│  ┌──────────────┐  ┌──────────────┐             │
-│  │ 自定义解析器  │  │ 自定义验证器  │             │
-│  └──────────────┘  └──────────────┘             │
-│  ┌──────────────────────────────────┐            │
-│  │      自定义分析任务                │            │
-│  └──────────────────────────────────┘            │
-└─────────────────┬───────────────────────────────┘
-                  │ 调用
+┌─────────────────────────────────────────────────────────┐
+│                    用户交互层                            │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
+│  │   CLI 工具   │  │  Python API  │  │   Skill 系统 │  │
+│  └──────────────┘  └──────────────┘  └──────────────┘  │
+└─────────────────┬───────────────────────────────────────┘
+                  │
                   ▼
-┌─────────────────────────────────────────────────┐
-│               BitwiseAI 核心                      │
-│  ┌────────────┐  ┌────────────┐  ┌──────────┐  │
-│  │  LLM 引擎  │  │  RAG 引擎  │  │ 工具系统  │  │
-│  └────────────┘  └────────────┘  └──────────┘  │
-│  ┌────────────┐  ┌────────────┐  ┌──────────┐  │
-│  │  任务管理  │  │ 报告生成   │  │ 向量数据库│  │
-│  └────────────┘  └────────────┘  └──────────┘  │
-└─────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                  BitwiseAI 核心层                       │
+│  ┌────────────┐  ┌────────────┐  ┌──────────────────┐  │
+│  │  LLM 管理  │  │  RAG 引擎  │  │   Skill 管理器   │  │
+│  └────────────┘  └────────────┘  └──────────────────┘  │
+│  ┌────────────┐  ┌────────────┐  ┌──────────────────┐  │
+│  │ 记忆管理器 │  │ 文档管理器 │  │   对话引擎       │  │
+│  └────────────┘  └────────────┘  └──────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────────────────────────┐
+│                  数据存储层                             │
+│  ┌────────────┐  ┌────────────┐  ┌──────────────────┐  │
+│  │ SQLite DB  │  │ 向量索引   │  │   记忆文件       │  │
+│  │ (metadata) │  │ (semantic) │  │ (MEMORY.md)      │  │
+│  └────────────┘  └────────────┘  └──────────────────┘  │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## 📖 核心接口
+## 🛠️ CLI 命令参考
 
-### LogParserInterface
+### chat - 对话模式
+
+```bash
+# 单次查询
+bitwiseai chat "你的问题"
+
+# 交互模式
+bitwiseai chat
+
+# 使用 RAG 检索
+bitwiseai chat --use-rag "根据文档回答..."
+```
+
+**交互模式命令：**
+```
+/help              - 显示帮助
+/clear             - 清空上下文
+/archive [标题]    - 归档当前对话到长期记忆
+/skills            - 列出所有 Skills
+/load <skill>      - 加载 Skill
+/unload <skill>    - 卸载 Skill
+/agent             - 使用 Agent 模式
+/quit              - 退出
+```
+
+### agent - Agent 模式
+
+```bash
+# 自动执行任务
+bitwiseai agent "任务描述"
+
+# 流式输出
+bitwiseai agent "任务描述" --stream
+```
+
+### skill - Skill 管理
+
+```bash
+# 列出所有 Skills
+bitwiseai skill --list
+bitwiseai skill --list --loaded-only
+
+# 加载/卸载 Skill
+bitwiseai skill --load <skill-name>
+bitwiseai skill --unload <skill-name>
+
+# 搜索 Skills
+bitwiseai skill --search "关键词"
+
+# 添加外部技能目录
+bitwiseai skill --add-dir ~/.bitwiseai/skills
+```
+
+### session - 会话管理
+
+```bash
+# 列出所有会话
+bitwiseai session --list
+
+# 创建新会话
+bitwiseai session --new "项目名称"
+
+# 切换会话
+bitwiseai session --switch <session-id>
+
+# 删除会话
+bitwiseai session --delete <session-id>
+```
+
+### memory - 记忆管理（交互模式）
+
+```bash
+# 在交互模式中使用
+你: /archive 重要讨论    # 归档当前对话
+```
+
+## 📖 Python API 参考
+
+### 基础对话
 
 ```python
-class LogParserInterface(ABC):
-    @abstractmethod
-    def parse_file(self, file_path: str) -> Any:
-        """解析日志文件"""
-        pass
-    
-    @abstractmethod
-    def parse_text(self, text: str) -> Any:
-        """解析日志文本"""
-        pass
+# 非流式对话
+ai.chat(query, use_rag=True)
+
+# 流式对话
+for token in ai.chat_stream(query):
+    print(token, end="")
 ```
 
-### VerifierInterface
+### 记忆系统
 
 ```python
-class VerifierInterface(ABC):
-    @abstractmethod
-    def verify(self, data: Any) -> List[AnalysisResult]:
-        """验证数据"""
-        pass
+# 搜索记忆
+ai.remember(query, max_results=5)
+
+# 添加到长期记忆
+ai.memorize(content, category="一般", tags=[])
+
+# 查看记忆统计
+ai.get_memory_stats()
+
+# 整理短期记忆（归档过期内容）
+ai.compact_short_term()
 ```
 
-### TaskInterface
+### 文档管理
 
 ```python
-class TaskInterface(ABC):
-    @abstractmethod
-    def execute(self, context: BitwiseAI) -> List[AnalysisResult]:
-        """执行任务"""
-        pass
+# 加载文件夹
+ai.load_documents(folder_path, skip_duplicates=True)
+
+# 加载单个文档（仅支持 .md, .txt）
+ai.load_document(file_path)
+
+# 添加文本
+ai.add_text(text, source="自定义")
+
+# 清空知识库
+ai.clear_memory_db()
 ```
 
-## 🛠️ API 参考
+### Skill 管理
 
-### Skills 管理
+```python
+# 加载 Skill
+ai.load_skill(name)
 
-- `load_skill(name)` - 加载 Skill
-- `unload_skill(name)` - 卸载 Skill
-- `list_skills(loaded_only=False)` - 列出所有 Skills
-- `invoke_tool(name, *args, **kwargs)` - 调用工具（来自已加载的 Skills）
-- `list_tools()` - 列出所有可用工具
+# 卸载 Skill
+ai.unload_skill(name)
 
-### 任务管理
+# 列出 Skills
+ai.list_skills(loaded_only=False)
 
-- `register_task(task)` - 注册任务
-- `execute_task(task)` - 执行单个任务
-- `execute_all_tasks()` - 执行所有任务
-- `list_tasks()` - 列出所有任务
+# 搜索 Skills
+ai.search_skills(query, top_k=5)
+```
 
-### 文档和 RAG
+### Agent 模式
 
-- `load_documents(folder_path, skip_duplicates=True)` - 加载文档到向量数据库
-- `load_specification(spec_path)` - 加载规范文档（文件或目录）
-- `query_specification(query, top_k=5)` - 查询规范文档
-- `load_log_file(file_path)` - 加载日志文件（用于任务分析）
-- `ask_about_log(question)` - 询问关于日志的问题
+```python
+import asyncio
 
-### 报告生成
+# Agent 模式
+response = await ai.chat_with_agent(query)
 
-- `generate_report(format)` - 生成报告
-- `save_report(file_path, format)` - 保存报告
-
-### LLM 对话
-
-- `chat(query, use_rag=True, use_tools=True)` - 对话（支持 RAG 和工具调用）
-- `chat_stream(query, use_rag=True, use_tools=True)` - 流式对话
-- `analyze_with_llm(prompt, use_rag=True)` - AI 辅助分析
+# 流式 Agent
+async for token in ai.chat_with_agent_stream(query):
+    print(token, end="")
+```
 
 ## 📁 项目结构
 
 ```
 bitwiseai/
-├── __init__.py              # 包入口
-├── bitwiseai.py             # 核心类
-├── cli.py                   # 命令行接口
-├── interfaces.py            # 接口定义（LogParserInterface, VerifierInterface, TaskInterface）
-├── llm.py                   # LLM 封装
-├── embedding.py             # Embedding 封装
-├── vector_database.py       # 向量数据库（Milvus）
-├── utils.py                 # 工具函数
-├── core/                    # 核心模块
-│   ├── chat_engine.py       # 聊天引擎
-│   ├── rag_engine.py        # RAG 引擎
-│   ├── skill_manager.py     # Skill 管理器
-│   └── document_manager.py  # 文档管理器
-└── skills/                  # Skills 目录
-    ├── asm_parser/          # ASM 解析 Skill
-    └── builtin/             # 内置 Skills
-        └── hex_converter/   # 十六进制转换 Skill
-
-examples/
-├── basic_usage.py           # 基础使用示例
-├── rag_usage.py             # RAG 使用示例
-├── custom_skill_example.py  # 自定义 Skill 示例
-└── document_export.py      # 文档导出示例
+├── __init__.py                  # 包入口
+├── bitwiseai.py                 # 核心类
+├── cli.py                       # 命令行接口
+├── core/                        # 核心模块
+│   ├── chat_engine.py           # 聊天引擎
+│   ├── enhanced_chat.py         # 增强版聊天引擎
+│   ├── rag_engine.py            # RAG 引擎
+│   ├── skill_manager.py         # Skill 管理器
+│   ├── document_manager.py      # 文档管理器
+│   ├── memory/                  # 记忆系统
+│   │   ├── manager.py           # 记忆管理器
+│   │   ├── indexer.py           # 文档索引器
+│   │   ├── searcher.py          # 记忆搜索器
+│   │   └── storage.py           # SQLite 存储
+│   ├── llm/                     # LLM 管理
+│   │   └── llm_manager.py       # LLM 管理器
+│   └── agent/                   # Agent 系统
+│       ├── executor.py          # 步骤执行器
+│       └── loop.py              # Agent 主循环
+└── skills/                      # Skills 目录
+    ├── asm-parser/              # ASM 解析 Skill
+    ├── error-analyzer/          # 错误分析 Skill
+    ├── memory-archiver/         # 对话归档 Skill
+    └── builtin/                 # 内置 Skills
 ```
 
 ## ⚙️ 配置
 
-配置文件位于 `~/.bitwiseai/config.json`:
+配置文件位于 `~/.bitwiseai/config.json`：
 
 ```json
 {
   "llm": {
-    "model": "MiniMax-M2.1",
+    "api_key": "sk-xxx",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-4o-mini",
     "temperature": 0.7
   },
   "embedding": {
-    "model": "Qwen/Qwen3-Embedding-8B"
+    "api_key": "sk-xxx",
+    "base_url": "https://api.openai.com/v1",
+    "model": "text-embedding-3-small"
   },
-  "vector_db": {
-    "db_file": "~/.bitwiseai/milvus_data.db",
-    "collection_name": "bitwiseai_specs",
-    "embedding_dim": 4096
+  "memory": {
+    "enabled": true,
+    "db_path": "~/.bitwiseai/memory.db",
+    "vector_enabled": true,
+    "chunking": {
+      "tokens": 400,
+      "overlap": 80
+    },
+    "hybrid_search": {
+      "enabled": true,
+      "vector_weight": 0.7,
+      "text_weight": 0.3
+    },
+    "sync": {
+      "watch": true,
+      "watch_debounce_ms": 1000
+    },
+    "short_term": {
+      "enabled": true,
+      "retention_days": 7
+    }
   },
-  "system_prompt": "你是 BitwiseAI，专注于硬件指令验证和调试日志分析的 AI 助手。",
-  "tools": []
+  "skills": {
+    "auto_load": [],
+    "external_directories": ["~/.bitwiseai/skills"]
+  }
 }
 ```
 
@@ -467,22 +516,12 @@ examples/
 
 MIT License
 
-## 📚 文档
-
-详细的文档和指南：
-
-- [使用指南](docs/USAGE_GUIDE.md) - 基本使用方法和示例
-- [**文档管理指南**](docs/DOCUMENT_MANAGEMENT_GUIDE.md) - 文档加载、切分、检索、导出完整指南 ⭐
-- [CLI 指南](docs/CLI_GUIDE.md) - 命令行工具使用说明
-- [架构文档](docs/ARCHITECTURE.md) - 系统架构和设计理念
-- [依赖说明](docs/DEPENDENCIES.md) - 依赖包和版本要求
-- [**Skills 开发指南**](docs/SKILLS_GUIDE.md) - 如何创建和添加新的 Skills ⭐
-
 ## 🔗 相关资源
 
-- [LangChain 文档](https://python.langchain.com/)
-- [Milvus 文档](https://milvus.io/docs)
+- [CLI 使用指南](docs/CLI_USAGE_GUIDE.md)
+- [记忆系统设计](docs/MEMORY_SYSTEM_DESIGN.md)
+- [Skill 开发指南](docs/SKILLS_GUIDE.md)
 
 ---
 
-**BitwiseAI** - 让 AI 成为你的调试助手 🚀
+**BitwiseAI v0.1.3** - 让 AI 记住每一次对话 🚀

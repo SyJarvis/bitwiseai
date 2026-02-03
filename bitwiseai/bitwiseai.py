@@ -295,8 +295,11 @@ class BitwiseAI:
         # 扫描技能
         self.skill_manager.scan_skills()
 
-        # 自动加载技能
+        # 自动加载技能（包括内置默认技能和用户配置）
+        default_auto_load = ['memory-archiver']  # 默认自动加载的技能
         auto_load = skill_config.get("auto_load", [])
+        auto_load = list(dict.fromkeys(default_auto_load + auto_load))  # 去重保持顺序
+
         for skill_name in auto_load:
             if skill_name in self.skill_manager.list_available_skills():
                 self.skill_manager.load_skill(skill_name)
